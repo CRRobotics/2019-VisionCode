@@ -5,18 +5,31 @@ import math
 from GripPipeline import GripPipeline
 
 # Constants
-FOV                     = 42.0
+FOV_X                   = 42.0
+FOV_Y                   = 31.0
 WIDTH                   = 640.0
 HEIGHT                  = 480.0
 LENGTH_IN_INCHES        = 5.75
-FOV_PER_PIXEL           = FOV / WIDTH
+#FOV_PER_PIXEL           = FOV / WIDTH
 X_POSITION              = 8
 Y_POSITION              = 8
 Z_POSITION              = 757
 ANGLE_OF_CAMERA         = 0
 DISTANCE_BETWEEN_BOXES  = 8
-ASPECT_RATIO_CONSTANT   = 60
-print(math.atan(78.5/12)*180/3.141592654)
+RECT_HEIGHT             = 5.5
+
+FOCAL_LENGTH_W = WIDTH / (2*math.tan(FOV_X / 180 * math.pi / 2))
+FOCAL_LENGTH_H = HEIGHT / (2*math.tan(FOV_Y / 180 * math.pi / 2))
+CENTER_X = (WIDTH - 1) / 2
+#print(math.atan(78.5/12)*180/3.141592654)
+
+
+def x_to_angle(x):
+    return math.atan((x - CENTER_X) / FOCAL_LENGTH_W) * 180 / math.pi
+
+
+def y_to_angle(x):
+    return math.atan((y - CENTER_Y) / FOCAL_LENGTH_H) * 180 / math.pi
 
 # location of text for testing
 font                    = cv2.FONT_HERSHEY_SIMPLEX
@@ -95,7 +108,7 @@ while True:
                 length = sum((a - b) ** 2 for a, b in zip(ySortedBox[3], center)) ** 0.5
                 cv2.putText(img, "length = " + str(length), (50, 150), font, 1, (0, 255, 0), 2)
 
-                angle = FOV_PER_PIXEL * (WIDTH / 2 - center[0]) + ANGLE_OF_CAMERA
+                angle = x_to_angle(center[0]) + ANGLE_OF_CAMERA
                 cv2.putText(img, str(int(angle)) + " degrees from center", (50, 50), font, 1, (0, 255, 0), 2)
 
                 # finding the distance of the target
