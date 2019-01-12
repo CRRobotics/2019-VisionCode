@@ -1,18 +1,21 @@
 import cv2
 import time
 import numpy as np
+import math
 from GripPipeline import GripPipeline
 
 # Constants
-FOV = 60.0
-WIDTH = 640.0
-HEIGHT = 480.0
-LENGTH_IN_INCHES = 5.5
-FOV_PER_PIXEL = 0.09375
-X_POSITION = 0
-Y_POSITION = 0
-ANGLE_OF_CAMERA = 0
-
+FOV                     = 42.0
+WIDTH                   = 640.0
+HEIGHT                  = 480.0
+LENGTH_IN_INCHES        = 5.75
+FOV_PER_PIXEL           = FOV / WIDTH
+X_POSITION              = 0
+Y_POSITION              = 0
+ANGLE_OF_CAMERA         = 0
+DISTANCE_BETWEEN_BOXES = 8
+ASPECT_RATIO_CONSTANT   = 60
+print(math.atan(78.5/12)*180/3.141592654)
 
 # location of text for testing
 font                   = cv2.FONT_HERSHEY_SIMPLEX
@@ -45,8 +48,8 @@ while True:
             trmp2 = rect[i-1]
 
             # displays the angle of the trmps on the screen
-            cv2.putText(img, str(int(trmp[2])), (50, 50), font, 1, (0, 255, 0), 2)
-            cv2.putText(img, str(int(trmp2[2])), (50, 100), font, 1, (0, 255, 0), 2)
+            #cv2.putText(img, str(int(trmp[2])), (50, 50), font, 1, (0, 255, 0), 2)
+            #cv2.putText(img, str(int(trmp2[2])), (50, 100), font, 1, (0, 255, 0), 2)
 
             # creates a tuple of each of the corners of trmp
             box = cv2.boxPoints(trmp)
@@ -89,18 +92,22 @@ while True:
 
             if abs(lowestPoint2 - lowestPoint) > abs(secondHighestPoint2 - secondHighestPoint):
                 # gets center and draws it
-                center = ((p2[0] + p4[0])//2, (p2[1] + p4[1])//2)
-                cv2.circle(img, center, 3, (0, 0, 255))
+                center = ((p2[0] + p4[0])/2, (p2[1] + p4[1])/2)
+                cv2.circle(img, tuple(map(int, center)), 3, (0, 0, 255))
 
                 # gets the distance between the points and the center
-                length = abs(ySortedBox[3][0] - center[0])
-                print(length)
-                angle = FOV_PER_PIXEL * (320 - center[0]) + ANGLE_OF_CAMERA
-                cv2.putText(img, str(angle), (50, 150), font, 1, (0, 255, 0), 2)
+                length = sum((a - b) ** 2 for a, b in zip(ySortedBox[3], center)) ** 0.5
 
+                cv2.putText(img, "length = " + str(length), (50, 150), font, 1, (0, 255, 0), 2)
+                trigAngle = length*FOV_PER_PIXEL
 
+                angle = FOV_PER_PIXEL * (WIDTH / 2 - center[0]) + ANGLE_OF_CAMERA
+                angle = int(angle)
+                cv2.putText(img, str(angle) + " degrees from center", (50, 50), font, 1, (0, 255, 0), 2)
 
-
+                # Finding angle of rotataion of target
+                distance = LENGTH_IN_INCHES/math.tan(trigAngle*math.pi/180)
+                cv2.putText(img, str(distance) + " distance from camera", (50, 100), font, 1, (0, 255, 0), 2)
 
     # if(len(rect) > 0):
 
