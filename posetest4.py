@@ -12,9 +12,9 @@ class GripPipeline:
         """initializes all values to presets or None if need to be set
         """
 
-        #self.__hsv_threshold_hue = [36.6546762589928, 102.07130730050935]
-        #self.__hsv_threshold_saturation = [36.6906474820144, 255.0]
-        #self.__hsv_threshold_value = [82.55395683453237, 255.0]
+        self.__hsv_threshold_hue = [36.6546762589928, 102.07130730050935]
+        self.__hsv_threshold_saturation = [36.6906474820144, 255.0]
+        self.__hsv_threshold_value = [82.55395683453237, 255.0]
 
         # c270 new
         #self.__hsv_threshold_hue = [49, 139] 
@@ -22,9 +22,9 @@ class GripPipeline:
         #self.__hsv_threshold_value = [76, 255.0]
 
         # c920
-        self.__hsv_threshold_hue = [49, 159]
-        self.__hsv_threshold_saturation = [92, 255.0]
-        self.__hsv_threshold_value = [44, 212]
+        #self.__hsv_threshold_hue = [49, 159]
+        #self.__hsv_threshold_saturation = [92, 255.0]
+        #self.__hsv_threshold_value = [44, 212]
 
         self.hsv_threshold_output = None
 
@@ -86,8 +86,8 @@ world_pts = [
         (14.627, 0),
 ]
 
-cam_mtrx = cam_mtrx_c920
-distorts = distorts_c920
+#cam_mtrx = cam_mtrx_c920
+#distorts = distorts_c920
 
 def draw(img, corner, imgpts):
     corner = tuple(corner.ravel())
@@ -112,6 +112,37 @@ def draw_cube(img, corner, imgpts):
     # draw top layer in red color
     img = cv2.drawContours(img, [imgpts[4:]],-1,(0,0,255),3)
     return img
+from collections import defaultdict
+def segment_by_angle_kmeans(lines, angles, k=2, **kwargs):
+    """Groups lines based on angle with k-means.
+
+    Uses k-means on the coordinates of the angle on the unit circle
+    to segment `k` angles inside `lines`.
+    """
+
+    # Define criteria = (type, max_iter, epsilon)
+    default_criteria_type = cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER
+    criteria = kwargs.get('criteria', (default_criteria_type, 10, 1.0))
+    flags = kwargs.get('flags', cv2.KMEANS_RANDOM_CENTERS)
+    attempts = kwargs.get('attempts', 10)
+
+    # returns angles in [0, pi] in radians
+    #angles = np.array([line[0][1] for line in lines])
+    # multiply the angles by two and find coordinates of that angle
+    pts = np.array([[np.cos(2*angle), np.sin(2*angle)]
+                    for angle in angles], dtype=np.float32)
+
+    # run kmeans on the coords
+    labels, centers = cv2.kmeans(pts, k, None, criteria, attempts, flags)[1:]
+    labels = labels.reshape(-1)  # transpose to row vec
+
+    # segment lines based on their kmeans label
+    segmented = defaultdict(list)
+    for i, line in zip(range(len(lines)), lines):
+        segmented[labels[i]].append(line)
+    segmented = list(segmented.values())
+    return segmented
+
 cube = np.float32([[0,0,0], [0,3,0], [3,3,0], [3,0,0],
                    [0,0,-3],[0,3,-3],[3,3,-3],[3,0,-3] ])
 
@@ -171,8 +202,12 @@ def main_loop():
         #    cv2.drawContours(fr, i, -1, (255, 255, 0), 3)
         #print('approxes', approxes)
         a = False
-        for loop in approxes:
+        fc = np.zeros((0, 2), dtype='int32')
+        prevArea = 0
+        for area, loop in sorted(((cv2.contourArea(x), x) for x in approxes), key=lambda x: x[0], reverse=True):
             if len(loop) > 8: continue
+            if area < prevArea / 2: continue
+            prevArea = area
             #x = list(sorted(enumerate(loop), key=lambda x: x[1][0][1]))
             #median_idx, last = x[len(x) // 2]
             #l2 = np.concatenate((loop[median_idx:], loop[:median_idx]), axis=0)
@@ -186,73 +221,62 @@ def main_loop():
                 prev = loop[(i-1)%ll][0]
                 nex = loop[(i+1)%ll][0]
                 cur = cur[0]
-                #print(prev, nex)
-                #al = math.sqrt((prev[0] - cur[0]) ** 2 + (prev[1] - cur[1]) ** 2)
-                #bl = math.sqrt((nex[0] - cur[0]) ** 2 + (nex[1] - cur[1]) ** 2)
-                #cl = math.sqrt((prev[0] - nex[0]) ** 2 + (prev[1] - nex[1]) ** 2)
-
-                #angle = math.acos((al**2+bl**2-cl**2)/(2*al*bl))
-                #bendinesses[i] = angle / (al + bl)
                 angles[i] = abs(math.atan2(cur[1] - prev[1], cur[0] - prev[0]) - math.atan2(cur[1] - nex[1], cur[0] - nex[0]))
-                #dsts[i] = math.sqrt((cur[1] - prev[1]) ** 2 + (cur[0] - prev[0]) ** 2)
-            sp = [x[1] for x in sorted(enumerate(loop), key=lambda x: angles[x[0]], reverse=True)][:4]
+            sp = [x[0] for i, x in enumerate(loop) if angles[i] > 0.1]
+            if len(sp) < 4: continue
+            #sp = list(sorted(enumerate(loop), key=lambda x: angles[x[0]], reverse=True))
 
-            #adiff = np.divide(np.abs(np.diff(angles)), dsts[:-1])
-            #amax = np.max(adiff)
-            #msk = adiff > (amax / 2)
-            #msk = np.append(msk, True) & np.insert(msk, 0, True)
-            #if not a:
-            #    a = True
-            #    for i, v in enumerate(angles):
-            #        fr[400 - int(v) * 5, i] = (0, 0, 255)
+            #if len(sp) > 4 and angles[sp[4][0]] > 0.1 * angles[sp[3][0]]:
+            #    cv2.polylines(fr, [loop], True, (0, 0, 255))
+            #    continue
+            pairs = [(sp[i], sp[(i+1)%len(sp)]) for i in range(len(sp))]
+            relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))[:4]
+            angles2 = [math.atan2(x[1][1] - x[0][1], x[0][1] - x[0][0]) for x in relevantLines]
+            sg = segment_by_angle_kmeans(list(range(4)), angles2)
+            print(sg)
 
-            #peaks = scipy.signal.find_peaks_cwt(np.abs(np.diff(bendinesses)), np.arange(1, 10))
-            #for i in peaks:
-            #    x, y = l2[i][0]
-            #    cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 0), -1)
-            for i in sp:
-                x, y = i[0]
-                cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 255), -1)
+            for l1, l2 in relevantLines:
+                cv2.line(fr, tuple(l1), tuple(l2), (0, 0, 255), 1, cv2.LINE_AA)
+            #cv2.polylines(fr, [loop], True, (0, 255, 0))
+            sp = [x[1] for x in sp[:4]]
+            #print(sp)
+            #fc += np.float32(sp)[:,0]
+            #fc = np.append(fc, np.int32(sp)[:,0], axis=0)
+            #for i in sp:
+            #    x, y = i[0]
+            #    cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 255), -1)
+        if False:
+            eroded_hsv = cv2.dilate(eroded_hsv_1, kernel, iterations=2)
+            contours, hier = cv2.findContours(eroded_hsv, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            biggest_c = itertools.islice(sorted(contours, key=cv2.contourArea, reverse=True), 2)
+            zer = np.zeros(eroded_hsv.shape, np.uint8)
+            for i in biggest_c:
+                cv2.fillPoly(zer, pts=[i], color=255)
+                cv2.drawContours(fr, i, -1, (255, 255, 255), 1)
+            cactual = (corners > 0.0085 * corners.max()) & zer.astype(np.bool_) #eroded_hsv
 
-            #for i, v in enumerate(l2):
-            #    if msk[i]:
-            #        x, y = v[0]
-            #        cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 0), -1)
+            ret, labels, stats, centroids = cv2.connectedComponentsWithStats(cactual.astype('uint8'))
+            #fr[eroded_hsv_1.astype(np.bool_),2] = 255
+            #fr[cactual] = (0, 0, 255)
+            fc = []
+            for x, y in centroids[1:]:
+                    #fr[int(y), int(x)] = (0, 255, 0)
+                    ix, iy = int(x), int(y)
+                    cc = eroded_hsv_1[iy-10:iy+10,ix-10:ix+10].astype(np.bool_).sum()
 
-            #l2 = loop[median_idx:] + loop[:median_idx]
-            #for i, pt in enumerate(l2):
-            #    if angle is None:
-            #        angle = math.atan2(
-        eroded_hsv = cv2.dilate(eroded_hsv_1, kernel, iterations=2)
-        contours, hier = cv2.findContours(eroded_hsv, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        biggest_c = itertools.islice(sorted(contours, key=cv2.contourArea, reverse=True), 2)
-        zer = np.zeros(eroded_hsv.shape, np.uint8)
-        for i in biggest_c:
-            cv2.fillPoly(zer, pts=[i], color=255)
-            cv2.drawContours(fr, i, -1, (255, 255, 255), 1)
-        cactual = (corners > 0.0085 * corners.max()) & zer.astype(np.bool_) #eroded_hsv
-
-        ret, labels, stats, centroids = cv2.connectedComponentsWithStats(cactual.astype('uint8'))
-        #fr[eroded_hsv_1.astype(np.bool_),2] = 255
-        #fr[cactual] = (0, 0, 255)
-        fc = []
-        for x, y in centroids[1:]:
-                #fr[int(y), int(x)] = (0, 255, 0)
-                ix, iy = int(x), int(y)
-                cc = eroded_hsv_1[iy-10:iy+10,ix-10:ix+10].astype(np.bool_).sum()
-
-                if 15 < cc < 160:
-                    #cv2.putText(fr,str(cc),(ix, iy), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
-                    #cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 0), -1)
-                    fc.append((x, y))
-                else: pass
-                    #cv2.circle(fr, (int(x), int(y)), 2, (0, 0, 255), -1)
+                    if 15 < cc < 160:
+                        #cv2.putText(fr,str(cc),(ix, iy), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+                        #cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 0), -1)
+                        fc.append((x, y))
+                    else: pass
+                        #cv2.circle(fr, (int(x), int(y)), 2, (0, 0, 255), -1)
         c_exact = []
-        if fc:
+        if len(fc) > 0:
+            #print(fc)
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
             c_exact = cv2.cornerSubPix(greenscale, np.float32(fc), (5, 5), (-1, -1), criteria)
-            #for x, y in c_exact:
-            #    cv2.circle(fr, (int(x), int(y)), 1, (255, 0, 0), -1)
+            for x, y in c_exact:
+                cv2.circle(fr, (int(x), int(y)), 1, (255, 0, 0), -1)
             #for i, (x, y, z) in enumerate(world_pts):
             #    cv2.putText(fr,str(i),(int(x*5),int(y*5)+50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
             
@@ -305,7 +329,7 @@ def main_loop():
         #print(corners)
         cv2.imshow('f1', fr)
         cv2.imshow('dsst', op)
-        cv2.imshow('bc', zer)
+        #cv2.imshow('bc', zer)
         if cv2.waitKey(1) & 0xff == 27: break
     cv2.destroyAllWindows()
 import threading
