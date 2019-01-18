@@ -101,7 +101,7 @@ print(cam_mtrx)
 cap = cv2.VideoCapture(7)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-os.system('v4l2-ctl -d /dev/video7 -c exposure_absolute=30')
+os.system('v4l2-ctl -d /dev/video7 -c exposure_absolute=20')
 pipeline = GripPipeline()
 targetColor = cv2.cvtColor(np.array([[[128, 255, 128]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
 lab_factors = 2, 1, 1

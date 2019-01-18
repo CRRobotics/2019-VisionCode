@@ -61,10 +61,10 @@ cam_mtrx =  np.array(
  [  0.,         891.25688996, 225.79027452],
  [  0.,           0.,           1.        ]], dtype='float32')
 
-cam_mtrx =  np.array(
-[[715,   0.,         310],
- [  0.,         715, 240],
- [  0.,           0.,           1.        ]], dtype='float32')
+#cam_mtrx =  np.array(
+#[[715,   0.,         310],
+# [  0.,         715, 240],
+# [  0.,           0.,           1.        ]], dtype='float32')
 
 cam_mtrx_c920 = np.float32(
 [[596.26209856,   0.,         453.26862804],
@@ -162,9 +162,9 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 864)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 #cap.set(cv2.CAP_PROP_EXPOSURE, n)
 pipeline = GripPipeline()
-#targetColor = cv2.cvtColor(np.array([[[128, 255, 128]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
+targetColor = cv2.cvtColor(np.array([[[128, 255, 128]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
 #targetColor = cv2.cvtColor(np.array([[[10 * 255 // 100, 47 * 255 // 100, 25 * 255 // 100]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
-targetColor = cv2.cvtColor(np.array([[[0x28, 0x68, 0x4e]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
+#targetColor = cv2.cvtColor(np.array([[[0x28, 0x68, 0x4e]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
 lab_factors = 2, 1, 1
 g_rot = np.float32([[0, 0, 0]]).T
 g_pos = np.float32([[0, 0, 0]]).T
@@ -185,10 +185,15 @@ def main_loop():
         pipeline.process(fr)
         op = pipeline.hsv_threshold_output
         o8 = op.astype('uint8') * 128
-        corners = cv2.cornerHarris(np.float32(greenscale), 4, 3, 0.03)
+        corners = cv2.cornerHarris(np.float32(greenscale), 2, 3, 0.03)
+        #corners[corners < 0] = 0
         #print(corners.min(), corners.max())
         #cm = corners + (-corners.min() + 1)
         #print(cm.min(), cm.max())
+        cm = corners.copy()
+        cm[cm < 0] = 0
+        #print(cm.max())
+        cm = cv2.cvtColor((cm / 65536).astype(np.float32),cv2.COLOR_GRAY2RGB)
         #lcorn = np.log(cm)
         
         #print(lcorn.min(), lcorn.max())
@@ -202,7 +207,7 @@ def main_loop():
         #    cv2.drawContours(fr, i, -1, (255, 255, 0), 3)
         #print('approxes', approxes)
         a = False
-        fc = np.zeros((0, 2), dtype='int32')
+        pts1 = []#np.zeros((0, 2), dtype=np.float32)
         prevArea = 0
         for area, loop in sorted(((cv2.contourArea(x), x) for x in approxes), key=lambda x: x[0], reverse=True):
             if len(loop) > 8: continue
@@ -231,12 +236,28 @@ def main_loop():
             #    continue
             pairs = [(sp[i], sp[(i+1)%len(sp)]) for i in range(len(sp))]
             relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))[:4]
-            angles2 = [math.atan2(x[1][1] - x[0][1], x[0][1] - x[0][0]) for x in relevantLines]
-            sg = segment_by_angle_kmeans(list(range(4)), angles2)
-            print(sg)
+            order = relevantLines[0], relevantLines[2], relevantLines[1], relevantLines[3]
+            for i, cur in enumerate(order):
+                nex = order[(i+1)%4]
+                (x1, y1), (x2, y2) = cur
+                (x3, y3), (x4, y4) = nex
+                try:
+                    res = np.linalg.solve(np.array([
+                        [x2 - x1, 0, -1, 0],
+                        [y2 - y1, 0, 0, -1],
+                        [0, x4 - x3, -1, 0],
+                        [0, y4 - y3, 0, -1]]), np.array([[-x1, -y1, -x3, -y3]]).T)
+                except np.linalg.LinAlgError:
+                    continue
+                #print(res)
+                #cv2.circle(fr, (int(res[2]), int(res[3])), 2, (255, 0, 255), -1)
+                pts1.append(res[2:4,0])
+            #angles2 = [math.atan2(x[1][1] - x[0][1], x[0][1] - x[0][0]) for x in relevantLines]
+            #sg = segment_by_angle_kmeans(list(range(4)), angles2)
+            #print(sg)
 
-            for l1, l2 in relevantLines:
-                cv2.line(fr, tuple(l1), tuple(l2), (0, 0, 255), 1, cv2.LINE_AA)
+            #for l1, l2 in relevantLines:
+            #    cv2.line(fr, tuple(l1), tuple(l2), (0, 0, 255), 1, cv2.LINE_AA)
             #cv2.polylines(fr, [loop], True, (0, 255, 0))
             sp = [x[1] for x in sp[:4]]
             #print(sp)
@@ -245,6 +266,35 @@ def main_loop():
             #for i in sp:
             #    x, y = i[0]
             #    cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 255), -1)
+        fc = []
+        #print(pts1)
+        tt = np.full(fr.shape, 255, dtype=np.uint8)
+        for x, y in pts1:
+            if x < -10 or x > fr.shape[1] + 10 or y < -10 or y > fr.shape[0] + 10:
+                fc.append((x, y))
+                continue
+            #print(x, y)
+            ix, iy = int(x), int(y)
+            mx, my = max(ix - 10, 0), max(iy - 10, 0)
+            region = corners[my:iy+10,mx:ix+10]
+            #print(region)
+            masked = (region > .02 * region.max())
+            tt[my:iy+10,mx:ix+10,0] = masked * 255
+            tt[my:iy+10,mx:ix+10,1] = masked * 255
+            tt[my:iy+10,mx:ix+10,2] = masked * 255
+            ret, labels, stats, centroids = cv2.connectedComponentsWithStats(masked.astype('uint8'))
+            if len(centroids) <= 1:
+                fc.append((x, y))
+                cv2.rectangle(cm, (ix - 10, iy - 10), (ix + 10, iy + 10), (0.0, 0.0, 1.0))
+                continue
+            cv2.rectangle(cm, (ix - 10, iy - 10), (ix + 10, iy + 10), (0.0, 1.0, 0.0))
+            st, (cx, cy) = max(zip(stats[1:], centroids[1:]), key=lambda x: x[0][cv2.CC_STAT_AREA])
+            #print(cx, cy)
+            cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
+            #tt[int(cy+my),int(cx+mx)] = (0, 0, 255)
+            fc.append((cx + mx, cy + my))
+        cv2.imshow('tt', tt)
+
         if False:
             eroded_hsv = cv2.dilate(eroded_hsv_1, kernel, iterations=2)
             contours, hier = cv2.findContours(eroded_hsv, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -271,12 +321,13 @@ def main_loop():
                     else: pass
                         #cv2.circle(fr, (int(x), int(y)), 2, (0, 0, 255), -1)
         c_exact = []
+        #print(fc)
         if len(fc) > 0:
             #print(fc)
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
             c_exact = cv2.cornerSubPix(greenscale, np.float32(fc), (5, 5), (-1, -1), criteria)
             for x, y in c_exact:
-                cv2.circle(fr, (int(x), int(y)), 1, (255, 0, 0), -1)
+                cv2.circle(fr, (int(x), int(y)), 3, (255, 64, 64), 1)
             #for i, (x, y, z) in enumerate(world_pts):
             #    cv2.putText(fr,str(i),(int(x*5),int(y*5)+50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
             
@@ -291,17 +342,31 @@ def main_loop():
                         x, y = r
                         dx, dy = x - centerx, y - centery
                         return math.atan2(-dy, dx) % (2 * math.pi)
-                    pts += sorted(rect, key=key)
+                    l = list(sorted(rect, key=key))
+                    #for i, l1 in enumerate(l):
+                    #    l2 = l[(i+1)%4]
+                    #    cv2.line(fr, tuple(l1), tuple(l2), (0, 0, 255), 1, cv2.LINE_AA)
+                    pts += l
                 for i, (x, y) in enumerate(pts):
                     cv2.putText(fr,str(i),(int(x),int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
                 pts = np.float32(pts)
                 #print(pts)
-                retval2, rvecs, tvecs, inliers = cv2.solvePnPRansac(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
-                cv2.putText(fr,'I: {}'.format(len(inliers) if inliers is not None else 'X'),(550, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255) if inliers is not None and len(inliers) == 8 else (0,0,255),1,cv2.LINE_AA)
+                #retval2, rvecs, tvecs, inliers = cv2.solvePnPRansac(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                retval2, rvecs, tvecs, = cv2.solvePnP(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                #cv2.putText(fr,'I: {}'.format(len(inliers) if inliers is not None else 'X'),(550, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255) if inliers is not None and len(inliers) == 8 else (0,0,255),1,cv2.LINE_AA)
                 #retval2, rvecs, tvecs = cv2.solvePnP(world_pts, pts, cam_mtrx, distorts)
                 #print(inliers)
                 #print(rvecs, tvecs)
+                inliers = list(range(8))
                 if inliers is not None:
+                    #o = set(range(8)) - set(inliers[:,0].tolist())
+                    #for idx in o:
+                    #    x, y = pts[idx]
+                    #    ix, iy = int(x), int(y)
+                    #    #cv2.line(fr, (ix - 5, iy - 5), (ix + 5, iy + 5), (0, 0, 255), 1, cv2.LINE_AA)
+                    #    #cv2.line(fr, (ix - 5, iy + 5), (ix + 5, iy - 5), (0, 0, 255), 1, cv2.LINE_AA)
+                    #    cv2.circle(fr, (ix, iy), 3, (0, 0, 255), 1)
+
                     centerp = np.float32([14.627/2, -5.325/2, 0])
                     global g_rot, g_pos
                     g_rot = rvecs
@@ -327,8 +392,10 @@ def main_loop():
 
         #pipeline.hsv_threshold_output
         #print(corners)
-        cv2.imshow('f1', fr)
+        #cv2.imshow('corners', corners)
+        cv2.imshow('corners', cm)
         cv2.imshow('dsst', op)
+        cv2.imshow('f1', fr)
         #cv2.imshow('bc', zer)
         if cv2.waitKey(1) & 0xff == 27: break
     cv2.destroyAllWindows()
@@ -345,9 +412,14 @@ class MyApp(ShowBase):
         self.scene = self.loader.loadModel("Target.egg")
         self.scene.setHpr(0, 90, 0)
         self.scene.reparentTo(self.render)
-        self.sph = self.loader.loadModel("smiley.egg")
-        self.sph.reparentTo(self.render)
-        self.disableMouse()
+        #self.sph = self.loader.loadModel("smiley.egg")
+        self.cam_ind = self.loader.loadModel("camera.egg")
+        self.cam_ind.reparentTo(self.render)
+        self.cam_ind.setScale(2)
+        #self.disableMouse()
+        self.useTrackball()
+        print(self.trackball.node().getPos())
+        #print(self.trackball.getNode(0))
         self.scene.setPos(0, 0, -.254)
         self.taskMgr.add(self.updateTask, "update")
         self.camLens.setFov(60)
@@ -366,11 +438,11 @@ class MyApp(ShowBase):
         #print(rx, ry, rz)
         #print(x, y, z)
         #self.camera.setPos(-x, y, z)#*tvecs)
-        self.camera.setPos(x, z, -y)
+        self.cam_ind.setPos(x, z, -y)
         #self.camera.setPos(0, -50, 0)
         #ry, -rx, -rz
         #self.camera.setHpr(0, 0, 0)
-        self.camera.setHpr(-ry, rx, rz)#-rz, -rz)#rx, -rz)
+        self.cam_ind.setHpr(-ry, rx, rz)#-rz, -rz)#rx, -rz)
         return Task.cont
 
 

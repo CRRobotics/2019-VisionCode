@@ -12,14 +12,14 @@ class GripPipeline:
         """initializes all values to presets or None if need to be set
         """
 
-        #self.__hsv_threshold_hue = [36.6546762589928, 102.07130730050935]
-        #self.__hsv_threshold_saturation = [36.6906474820144, 255.0]
-        #self.__hsv_threshold_value = [82.55395683453237, 255.0]
+        self.__hsv_threshold_hue = [36.6546762589928, 102.07130730050935]
+        self.__hsv_threshold_saturation = [36.6906474820144, 255.0]
+        self.__hsv_threshold_value = [82.55395683453237, 255.0]
 
         # c270 new
-        self.__hsv_threshold_hue = [49, 139] 
-        self.__hsv_threshold_saturation = [140, 255.0]
-        self.__hsv_threshold_value = [76, 255.0]
+        #self.__hsv_threshold_hue = [49, 139] 
+        #self.__hsv_threshold_saturation = [140, 255.0]
+        #self.__hsv_threshold_value = [76, 255.0]
 
         # c920
         #self.__hsv_threshold_hue = [49, 159]
@@ -261,9 +261,9 @@ class MyApp(ShowBase):
         self.scene = self.loader.loadModel("Target.egg")
         self.scene.setHpr(0, 90, 0)
         self.scene.reparentTo(self.render)
-        self.sph = self.loader.loadModel("smiley.egg")
-        self.sph.reparentTo(self.render)
-        self.disableMouse()
+        self.cam_model = self.loader.loadModel("camera.egg")
+        self.cam_model.reparentTo(self.render)
+        #self.disableMouse()
         self.scene.setPos(0, 0, -.254)
         self.taskMgr.add(self.updateTask, "update")
         self.camLens.setFov(60)
@@ -282,11 +282,11 @@ class MyApp(ShowBase):
         print(rx, ry, rz)
         print(x, y, z)
         #self.camera.setPos(-x, y, z)#*tvecs)
-        self.camera.setPos(x, z, -y)
+        self.cam_model.setPos(x, z, -y)
         #self.camera.setPos(0, -50, 0)
         #ry, -rx, -rz
         #self.camera.setHpr(0, 0, 0)
-        self.camera.setHpr(-ry, rx, rz)#-rz, -rz)#rx, -rz)
+        self.cam_model.setHpr(-ry, rx, rz)#-rz, -rz)#rx, -rz)
         return Task.cont
 
 
