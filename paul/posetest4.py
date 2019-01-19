@@ -4,6 +4,7 @@ import math
 from enum import Enum
 import sys
 
+# load comments from external file
 constants = {}
 s = exec(open(sys.argv[1], 'r').read(), constants)
 
@@ -52,9 +53,11 @@ import os
 import numpy as np
 import sys
 
+# parameters of the camera which can be determined using calibrate.py from OpenCV
 cam_mtrx = constants['cam_mtrx']
 distorts = constants['distorts']
 
+# location of the target points, in world space, in order
 world_pts = [
         (3.313, 4.824),
         (1.337, 5.325),
@@ -66,19 +69,7 @@ world_pts = [
         (14.627, 0),
 ]
 
-def draw(img, corner, imgpts):
-    corner = tuple(corner.ravel())
-    try:
-        #print(tuple(imgpts[0].ravel()))
-        img = cv2.line(img, corner, tuple(imgpts[0].ravel()), (255,0,0), 3)
-        img = cv2.line(img, corner, tuple(imgpts[1].ravel()), (0,255,0), 3)
-        img = cv2.line(img, corner, tuple(imgpts[2].ravel()), (0,0,255), 3)
-    except OverflowError:
-        pass
-    return img
-
-axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3)
-
+# stolen from somewhere, draws a cube given perspective-transformed points
 def draw_cube(img, corner, imgpts):
     imgpts = np.int32(imgpts).reshape(-1,2)
     # draw ground floor in green
@@ -93,6 +84,7 @@ def draw_cube(img, corner, imgpts):
 cube = np.float32([[0,0,0], [0,3,0], [3,3,0], [3,0,0],
                    [0,0,-3],[0,3,-3],[3,3,-3],[3,0,-3] ])
 
+
 DEV = int(sys.argv[2])
 world_pts = np.float32([(x, -y, 0) for x, y in world_pts])
 print(world_pts)
@@ -106,40 +98,52 @@ os.system('v4l2-ctl -d /dev/video{} -c focus_absolute=0'.format(DEV))
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 #cap.set(cv2.CAP_PROP_FRAME_WIDTH, 864)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+# the GRIP pipeline is pretty trivial and just does the first level of HSV filtering
 pipeline = GripPipeline()
 targetColor = constants['targetColor']
 lab_factors = 2, 1, 1
 g_rot = np.float32([[0, 0, 0]]).T
 g_pos = np.float32([[0, 0, 0]]).T
+kernel = np.ones((5, 5), np.uint8)
 import itertools
 def main_loop():
     while True:
         rv, fr = cap.read()
+        if not rv: break
+
         fr_lab = cv2.cvtColor(fr, cv2.COLOR_BGR2LAB)
+        # convert frame to LAB color space
         channels = cv2.split(fr_lab.astype('int16'))
+
+        # create image of how close each pixel is to a certain color
         greenscale = np.zeros(fr.shape[:-1], 'int16')
         for tr, ch, fac in zip(targetColor, channels, lab_factors):
             greenscale += np.absolute(ch - tr) // fac
         greenscale = 255 - np.clip((greenscale), 0, 255).astype('uint8')
         cv2.imshow('greenscale', greenscale)
-        if not rv: break
         pipeline.process(fr)
         op = pipeline.hsv_threshold_output
         o8 = op.astype('uint8') * 255
         corners = cv2.cornerHarris(np.float32(greenscale), 2, 3, 0.03)
 
+        # version of corners image suitable for being displayed
         cm = corners.copy()
         cm[cm < 0] = 0
         cm = cv2.cvtColor((cm / 65536).astype(np.float32),cv2.COLOR_GRAY2RGB)
         
-        kernel = np.ones((5, 5), np.uint8)
+        # erode and dilate to reduce noise in thresholded image
         eroded_hsv_1 = cv2.dilate(cv2.erode(op, kernel, iterations=1), kernel, iterations=1)#.astype(np.bool_)
+
+        # find contours
         contours1, hier1 = cv2.findContours(eroded_hsv_1, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         approxes = [cv2.approxPolyDP(x, 0.01 * cv2.arcLength(x, True), True) for x in contours1]
 
         a = False
         pts1 = []
         prevArea = 0
+        ## Find contour edges, then find their intersections to find approximate corner locations
+        # iterate over contours, large to small
         for area, loop in sorted(((cv2.contourArea(x), x) for x in approxes), key=lambda x: x[0], reverse=True):
             if len(loop) > 8: continue
             if area < prevArea / 2: continue
@@ -147,6 +151,7 @@ def main_loop():
 
             angles = np.zeros(len(loop), dtype='float32')
             ll = len(loop)
+            # find angles of each corner and eliminate angles that are too straight
             for i, cur in enumerate(loop):
                 prev = loop[(i-1)%ll][0]
                 nex = loop[(i+1)%ll][0]
@@ -155,6 +160,7 @@ def main_loop():
             sp = [x[0] for i, x in enumerate(loop) if angles[i] < math.pi * .85]
             if len(sp) < 4: continue
 
+            # Order edges by long, short, long, short, so that each consecutive pair has an intersection
             pairs = [(sp[i], sp[(i+1)%len(sp)]) for i in range(len(sp))]
             relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))[:4]
             order = relevantLines[0], relevantLines[2], relevantLines[1], relevantLines[3]
@@ -162,6 +168,7 @@ def main_loop():
                 nex = order[(i+1)%4]
                 (x1, y1), (x2, y2) = cur
                 (x3, y3), (x4, y4) = nex
+                # find intersections
                 try:
                     res = np.linalg.solve(np.array([
                         [x2 - x1, 0, -1, 0],
@@ -169,11 +176,11 @@ def main_loop():
                         [0, x4 - x3, -1, 0],
                         [0, y4 - y3, 0, -1]]), np.array([[-x1, -y1, -x3, -y3]]).T)
                 except np.linalg.LinAlgError:
+                    # if lines are parallel, ignore
                     continue
                 pts1.append(res[2:4,0])
 
-            sp = [x[1] for x in sp[:4]]
-
+        # Look for Harris corners in the areas selected by edge intersections
         fc = []
         tt = fr.copy()
         corner_msk = np.zeros(fr.shape[:-1], dtype=np.bool_)
@@ -184,9 +191,11 @@ def main_loop():
                 #fc.append((x, y))
                 continue
             ix, iy = int(x), int(y)
+            # find coords of top-left corner
             mx, my = max(ix - BOX_SIZE, 0), max(iy - BOX_SIZE, 0)
             region = corners[my:iy+BOX_SIZE,mx:ix+BOX_SIZE]
             masked = (region > .0085 * fmax)#.002 * fmax)
+            # update debug image
             tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,0] = masked * 255
             tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,1] = masked * 255
             tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,2] = masked * 255
@@ -203,42 +212,22 @@ def main_loop():
                 rc = rc1.copy()
                 rc[~(labels == i)] = 0
                 return rc.sum()
+            # get connected component with the highest total Harris corner value
             i, (st, (cx, cy)) = max(enumerate(zip(stats[1:], centroids[1:])), key=key)
             cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
             fc.append((cx + mx, cy + my))
 
-        if False:
-            eroded_hsv = cv2.dilate(eroded_hsv_1, kernel, iterations=2)
-            contours, hier = cv2.findContours(eroded_hsv, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-            biggest_c = itertools.islice(sorted(contours, key=cv2.contourArea, reverse=True), 2)
-            zer = np.zeros(eroded_hsv.shape, np.uint8)
-            for i in biggest_c:
-                cv2.fillPoly(zer, pts=[i], color=255)
-                cv2.drawContours(fr, i, -1, (255, 255, 255), 1)
-            cactual = corner_msk & zer.astype(np.bool_)
-            cv2.imshow('corner2', cactual.astype('uint8') * 255)
-
-            ret, labels, stats, centroids = cv2.connectedComponentsWithStats(cactual.astype('uint8'))
-            fc = []
-            for x, y in centroids[1:]:
-                    ix, iy = int(x), int(y)
-                    cc = eroded_hsv_1[iy-10:iy+10,ix-10:ix+10].astype(np.bool_).sum()
-
-                    if 15 < cc < 160:
-                        #cv2.putText(fr,str(cc),(ix, iy), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
-                        #cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 0), -1)
-                        fc.append((x, y))
-                    else: pass
-                        #cv2.circle(fr, (int(x), int(y)), 2, (0, 0, 255), -1)
         c_exact = []
         if len(fc) > 0:
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
+            # refine corners to sub-pixel level
             c_exact = cv2.cornerSubPix(greenscale, np.float32(fc), (5, 5), (-1, -1), criteria)
             for x, y in c_exact:
                 cv2.circle(fr, (int(x), int(y)), 3, (255, 64, 64), 1)
             #for i, (x, y, z) in enumerate(world_pts):
             #    cv2.putText(fr,str(i),(int(x*5),int(y*5)+50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
             
+            ## Sort points. First split left and right rectangle, then sort counterclockwise by angle to the center
             if len(c_exact) == 8:
                 h = list(sorted(c_exact, key=lambda x: x[0]))
                 left = h[:4]
@@ -275,6 +264,7 @@ def main_loop():
                     g_rot = rvecs
                     g_pos = tvecs
 
+                    # Project cube according to perspective and display
                     qb = cube + centerp
                     imgpts, jac = cv2.projectPoints(qb, rvecs, tvecs, cam_mtrx, distorts)
                     fr = draw_cube(fr, None, imgpts)
@@ -288,7 +278,7 @@ def main_loop():
 
 
         #cv2.imshow('corners', corners)
-        #cv2.imshow('corners', cm)
+        cv2.imshow('corners', cm)
         cv2.imshow('dsst', op)
         cv2.imshow('f1', fr)
         #cv2.imshow('bc', zer)
@@ -317,12 +307,14 @@ class MyApp(ShowBase):
         self.taskMgr.add(self.updateTask, "update")
         self.camLens.setFov(60)
     def updateTask(self, t):
+        # Find inverse of perspective transform (get "camera moves" perspective)
         rod, jac = cv2.Rodrigues(g_rot)
         mat = np.append(np.append(rod, g_pos, axis=1), np.float32([[0, 0, 0, 1]]), axis=0)
         m2 = np.linalg.inv(mat)[:-1]
         tr2 = m2[:,3]
         rot2_rod = m2[:,:3]
         rot2, jac = cv2.Rodrigues(rot2_rod)
+        # 2.54 cm/inch
         x, y, z = tr2 * 2.54 #g_pos[:,0] * 2.54
         rx, ry, rz = rot2[:,0] * (180 / math.pi)
         
