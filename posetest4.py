@@ -2,6 +2,11 @@ import cv2
 import numpy
 import math
 from enum import Enum
+import sys
+
+constants = {}
+s = exec(open(sys.argv[1], 'r').read(), constants)
+
 
 class GripPipeline:
     """
@@ -12,19 +17,10 @@ class GripPipeline:
         """initializes all values to presets or None if need to be set
         """
 
-        self.__hsv_threshold_hue = [36.6546762589928, 102.07130730050935]
-        self.__hsv_threshold_saturation = [36.6906474820144, 255.0]
-        self.__hsv_threshold_value = [82.55395683453237, 255.0]
+        self.__hsv_threshold_hue = constants['hsv_threshold_hue']
+        self.__hsv_threshold_saturation = constants['hsv_threshold_saturation']
+        self.__hsv_threshold_value = constants['hsv_threshold_value']
 
-        # c270 new
-        #self.__hsv_threshold_hue = [49, 139] 
-        #self.__hsv_threshold_saturation = [140, 255.0]
-        #self.__hsv_threshold_value = [76, 255.0]
-
-        # c920
-        #self.__hsv_threshold_hue = [49, 159]
-        #self.__hsv_threshold_saturation = [92, 255.0]
-        #self.__hsv_threshold_value = [44, 212]
 
         self.hsv_threshold_output = None
 
@@ -56,25 +52,9 @@ import os
 import numpy as np
 import sys
 
-cam_mtrx =  np.array(
-[[859.68420929,   0.,         318.24497556],
- [  0.,         891.25688996, 225.79027452],
- [  0.,           0.,           1.        ]], dtype='float32')
+cam_mtrx = constants['cam_mtrx']
+distorts = constants['distorts']
 
-#cam_mtrx =  np.array(
-#[[715,   0.,         310],
-# [  0.,         715, 240],
-# [  0.,           0.,           1.        ]], dtype='float32')
-
-cam_mtrx_c920 = np.float32(
-[[596.26209856,   0.,         453.26862804],
- [  0.,         580.57194811, 270.86714865],
- [  0.,           0.,           1.        ]])
-
-distorts_c920 = np.float32([ 0.09042259, -0.26670032,  0.0015737,  -0.00970892,  0.2473531 ])
-
-
-distorts = None#np.array([-0.07893495,  1.34223772, -0.00841574, -0.008392,   -4.1361857 ], dtype='float32')
 world_pts = [
         (3.313, 4.824),
         (1.337, 5.325),
@@ -85,9 +65,6 @@ world_pts = [
         (12.691, -0.501),
         (14.627, 0),
 ]
-
-#cam_mtrx = cam_mtrx_c920
-#distorts = distorts_c920
 
 def draw(img, corner, imgpts):
     corner = tuple(corner.ravel())
@@ -112,59 +89,25 @@ def draw_cube(img, corner, imgpts):
     # draw top layer in red color
     img = cv2.drawContours(img, [imgpts[4:]],-1,(0,0,255),3)
     return img
-from collections import defaultdict
-def segment_by_angle_kmeans(lines, angles, k=2, **kwargs):
-    """Groups lines based on angle with k-means.
-
-    Uses k-means on the coordinates of the angle on the unit circle
-    to segment `k` angles inside `lines`.
-    """
-
-    # Define criteria = (type, max_iter, epsilon)
-    default_criteria_type = cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER
-    criteria = kwargs.get('criteria', (default_criteria_type, 10, 1.0))
-    flags = kwargs.get('flags', cv2.KMEANS_RANDOM_CENTERS)
-    attempts = kwargs.get('attempts', 10)
-
-    # returns angles in [0, pi] in radians
-    #angles = np.array([line[0][1] for line in lines])
-    # multiply the angles by two and find coordinates of that angle
-    pts = np.array([[np.cos(2*angle), np.sin(2*angle)]
-                    for angle in angles], dtype=np.float32)
-
-    # run kmeans on the coords
-    labels, centers = cv2.kmeans(pts, k, None, criteria, attempts, flags)[1:]
-    labels = labels.reshape(-1)  # transpose to row vec
-
-    # segment lines based on their kmeans label
-    segmented = defaultdict(list)
-    for i, line in zip(range(len(lines)), lines):
-        segmented[labels[i]].append(line)
-    segmented = list(segmented.values())
-    return segmented
 
 cube = np.float32([[0,0,0], [0,3,0], [3,3,0], [3,0,0],
                    [0,0,-3],[0,3,-3],[3,3,-3],[3,0,-3] ])
 
-DEV = int(sys.argv[1])
-#world_pts += ((14.627 - x, y) for x, y in reversed(world_pts))
+DEV = int(sys.argv[2])
 world_pts = np.float32([(x, -y, 0) for x, y in world_pts])
 print(world_pts)
 print(cam_mtrx)
 cap = cv2.VideoCapture(DEV)
 print('Got cap')
-exposure = 80 if len(sys.argv) < 3 else int(sys.argv[2])
+exposure = 80 if len(sys.argv) < 4 else int(sys.argv[3])
 os.system('v4l2-ctl -d /dev/video{} -c exposure_auto=1 -c white_balance_temperature_auto=0 -c exposure_absolute={}'.format(DEV, exposure))
 os.system('v4l2-ctl -d /dev/video{} -c focus_auto=0'.format(DEV))
 os.system('v4l2-ctl -d /dev/video{} -c focus_absolute=0'.format(DEV))
-#cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 864)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+#cap.set(cv2.CAP_PROP_FRAME_WIDTH, 864)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-#cap.set(cv2.CAP_PROP_EXPOSURE, n)
 pipeline = GripPipeline()
-targetColor = cv2.cvtColor(np.array([[[128, 255, 128]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
-#targetColor = cv2.cvtColor(np.array([[[10 * 255 // 100, 47 * 255 // 100, 25 * 255 // 100]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
-#targetColor = cv2.cvtColor(np.array([[[0x28, 0x68, 0x4e]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
+targetColor = constants['targetColor']
 lab_factors = 2, 1, 1
 g_rot = np.float32([[0, 0, 0]]).T
 g_pos = np.float32([[0, 0, 0]]).T
@@ -184,7 +127,7 @@ def main_loop():
         if not rv: break
         pipeline.process(fr)
         op = pipeline.hsv_threshold_output
-        o8 = op.astype('uint8') * 128
+        o8 = op.astype('uint8') * 255
         corners = cv2.cornerHarris(np.float32(greenscale), 2, 3, 0.03)
         #corners[corners < 0] = 0
         #print(corners.min(), corners.max())
@@ -226,8 +169,8 @@ def main_loop():
                 prev = loop[(i-1)%ll][0]
                 nex = loop[(i+1)%ll][0]
                 cur = cur[0]
-                angles[i] = abs(math.atan2(cur[1] - prev[1], cur[0] - prev[0]) - math.atan2(cur[1] - nex[1], cur[0] - nex[0]))
-            sp = [x[0] for i, x in enumerate(loop) if angles[i] > 0.1]
+                angles[i] = (math.atan2(cur[1] - prev[1], cur[0] - prev[0]) - math.atan2(cur[1] - nex[1], cur[0] - nex[0])) % math.pi
+            sp = [x[0] for i, x in enumerate(loop) if angles[i] < math.pi * .85]
             if len(sp) < 4: continue
             #sp = list(sorted(enumerate(loop), key=lambda x: angles[x[0]], reverse=True))
 
@@ -268,32 +211,44 @@ def main_loop():
             #    cv2.circle(fr, (int(x), int(y)), 2, (0, 255, 255), -1)
         fc = []
         #print(pts1)
-        tt = np.full(fr.shape, 255, dtype=np.uint8)
+        #tt = np.full(fr.shape, 255, dtype=np.uint8)
+        tt = fr.copy()
+        corner_msk = np.zeros(fr.shape[:-1], dtype=np.bool_)
+        fmax = corners.max()
+        BOX_SIZE=7
         for x, y in pts1:
-            if x < -10 or x > fr.shape[1] + 10 or y < -10 or y > fr.shape[0] + 10:
-                fc.append((x, y))
+            if x < -BOX_SIZE or x > fr.shape[1] + BOX_SIZE or y < -BOX_SIZE or y > fr.shape[0] + BOX_SIZE:
+                #fc.append((x, y))
                 continue
             #print(x, y)
             ix, iy = int(x), int(y)
-            mx, my = max(ix - 10, 0), max(iy - 10, 0)
-            region = corners[my:iy+10,mx:ix+10]
+            mx, my = max(ix - BOX_SIZE, 0), max(iy - BOX_SIZE, 0)
+            region = corners[my:iy+BOX_SIZE,mx:ix+BOX_SIZE]
             #print(region)
-            masked = (region > .02 * region.max())
-            tt[my:iy+10,mx:ix+10,0] = masked * 255
-            tt[my:iy+10,mx:ix+10,1] = masked * 255
-            tt[my:iy+10,mx:ix+10,2] = masked * 255
+            masked = (region > .0085 * fmax)#.002 * fmax)
+            #corner_msk[my:iy+10,mx:ix+10] = masked#True
+            tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,0] = masked * 255
+            tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,1] = masked * 255
+            tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,2] = masked * 255
             ret, labels, stats, centroids = cv2.connectedComponentsWithStats(masked.astype('uint8'))
             if len(centroids) <= 1:
-                fc.append((x, y))
-                cv2.rectangle(cm, (ix - 10, iy - 10), (ix + 10, iy + 10), (0.0, 0.0, 1.0))
+                #fc.append((x, y))
+                cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (0.0, 0.0, 1.0))
                 continue
-            cv2.rectangle(cm, (ix - 10, iy - 10), (ix + 10, iy + 10), (0.0, 1.0, 0.0))
-            st, (cx, cy) = max(zip(stats[1:], centroids[1:]), key=lambda x: x[0][cv2.CC_STAT_AREA])
+            cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (0.0, 1.0, 0.0))
+            rc1 = np.log(region - (region.min() - 1))
+            def key(x):
+                i, (stat, centroid) = x
+                i += 1
+                rc = rc1.copy()
+                rc[~(labels == i)] = 0
+                return rc.sum()
+            i, (st, (cx, cy)) = max(enumerate(zip(stats[1:], centroids[1:])), key=key)
             #print(cx, cy)
             cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
             #tt[int(cy+my),int(cx+mx)] = (0, 0, 255)
             fc.append((cx + mx, cy + my))
-        cv2.imshow('tt', tt)
+        #cv2.imshow('tt', tt)
 
         if False:
             eroded_hsv = cv2.dilate(eroded_hsv_1, kernel, iterations=2)
@@ -303,7 +258,11 @@ def main_loop():
             for i in biggest_c:
                 cv2.fillPoly(zer, pts=[i], color=255)
                 cv2.drawContours(fr, i, -1, (255, 255, 255), 1)
-            cactual = (corners > 0.0085 * corners.max()) & zer.astype(np.bool_) #eroded_hsv
+            #corn2 = corners.copy()
+            #corn2[~corner_msk] = 0
+            #cactual = (corn2 > 0.1 * corn2.max()) & zer.astype(np.bool_) #eroded_hsv
+            cactual = corner_msk & zer.astype(np.bool_)
+            cv2.imshow('corner2', cactual.astype('uint8') * 255)
 
             ret, labels, stats, centroids = cv2.connectedComponentsWithStats(cactual.astype('uint8'))
             #fr[eroded_hsv_1.astype(np.bool_),2] = 255
@@ -351,21 +310,21 @@ def main_loop():
                     cv2.putText(fr,str(i),(int(x),int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
                 pts = np.float32(pts)
                 #print(pts)
-                #retval2, rvecs, tvecs, inliers = cv2.solvePnPRansac(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
-                retval2, rvecs, tvecs, = cv2.solvePnP(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
-                #cv2.putText(fr,'I: {}'.format(len(inliers) if inliers is not None else 'X'),(550, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255) if inliers is not None and len(inliers) == 8 else (0,0,255),1,cv2.LINE_AA)
+                retval2, rvecs, tvecs, inliers = cv2.solvePnPRansac(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                #retval2, rvecs, tvecs, = cv2.solvePnP(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                cv2.putText(fr,'I: {}'.format(len(inliers) if inliers is not None else 'X'),(550, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255) if inliers is not None and len(inliers) == 8 else (0,0,255),1,cv2.LINE_AA)
                 #retval2, rvecs, tvecs = cv2.solvePnP(world_pts, pts, cam_mtrx, distorts)
                 #print(inliers)
                 #print(rvecs, tvecs)
-                inliers = list(range(8))
+                #inliers = list(range(8))
                 if inliers is not None:
-                    #o = set(range(8)) - set(inliers[:,0].tolist())
-                    #for idx in o:
-                    #    x, y = pts[idx]
-                    #    ix, iy = int(x), int(y)
-                    #    #cv2.line(fr, (ix - 5, iy - 5), (ix + 5, iy + 5), (0, 0, 255), 1, cv2.LINE_AA)
-                    #    #cv2.line(fr, (ix - 5, iy + 5), (ix + 5, iy - 5), (0, 0, 255), 1, cv2.LINE_AA)
-                    #    cv2.circle(fr, (ix, iy), 3, (0, 0, 255), 1)
+                    o = set(range(8)) - set(inliers[:,0].tolist())
+                    for idx in o:
+                        x, y = pts[idx]
+                        ix, iy = int(x), int(y)
+                        #cv2.line(fr, (ix - 5, iy - 5), (ix + 5, iy + 5), (0, 0, 255), 1, cv2.LINE_AA)
+                        #cv2.line(fr, (ix - 5, iy + 5), (ix + 5, iy - 5), (0, 0, 255), 1, cv2.LINE_AA)
+                        cv2.circle(fr, (ix, iy), 3, (0, 0, 255), 1)
 
                     centerp = np.float32([14.627/2, -5.325/2, 0])
                     global g_rot, g_pos
@@ -382,9 +341,9 @@ def main_loop():
                     imgpts, jac = cv2.projectPoints(qb, rvecs, tvecs, cam_mtrx, distorts)
                     fr = draw_cube(fr, None, imgpts)
 
-                    pts2, jac = cv2.projectPoints(world_pts, rvecs, tvecs, cam_mtrx, distorts)
-                    for x, y in np.int32(pts2).reshape(-1, 2):
-                        cv2.circle(fr, (x, y), 2, (255, 255, 255), -1)
+                    #pts2, jac = cv2.projectPoints(world_pts, rvecs, tvecs, cam_mtrx, distorts)
+                    #for x, y in np.int32(pts2).reshape(-1, 2):
+                    #    cv2.circle(fr, (x, y), 2, (255, 255, 255), -1)
             else:
                 cv2.putText(fr,'C: {}'.format(len(c_exact)),(550, 25), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
 
@@ -393,7 +352,7 @@ def main_loop():
         #pipeline.hsv_threshold_output
         #print(corners)
         #cv2.imshow('corners', corners)
-        cv2.imshow('corners', cm)
+        #cv2.imshow('corners', cm)
         cv2.imshow('dsst', op)
         cv2.imshow('f1', fr)
         #cv2.imshow('bc', zer)

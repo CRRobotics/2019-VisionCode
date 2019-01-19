@@ -2,6 +2,11 @@ import cv2
 import numpy
 import math
 from enum import Enum
+import sys
+
+constants = {}
+s = exec(open(sys.argv[1], 'r').read(), constants)
+
 
 class GripPipeline:
     """
@@ -12,19 +17,9 @@ class GripPipeline:
         """initializes all values to presets or None if need to be set
         """
 
-        self.__hsv_threshold_hue = [36.6546762589928, 102.07130730050935]
-        self.__hsv_threshold_saturation = [36.6906474820144, 255.0]
-        self.__hsv_threshold_value = [82.55395683453237, 255.0]
-
-        # c270 new
-        #self.__hsv_threshold_hue = [49, 139] 
-        #self.__hsv_threshold_saturation = [140, 255.0]
-        #self.__hsv_threshold_value = [76, 255.0]
-
-        # c920
-        #self.__hsv_threshold_hue = [49, 159]
-        #self.__hsv_threshold_saturation = [92, 255.0]
-        #self.__hsv_threshold_value = [44, 212]
+        self.__hsv_threshold_hue = constants['hsv_threshold_hue']
+        self.__hsv_threshold_saturation = constants['hsv_threshold_saturation']
+        self.__hsv_threshold_value = constants['hsv_threshold_value']
 
         self.hsv_threshold_output = None
 
@@ -56,25 +51,9 @@ import os
 import numpy as np
 import sys
 
-cam_mtrx =  np.array(
-[[859.68420929,   0.,         318.24497556],
- [  0.,         891.25688996, 225.79027452],
- [  0.,           0.,           1.        ]], dtype='float32')
+cam_mtrx = constants['cam_mtrx']
+distorts = constants['distorts']
 
-cam_mtrx =  np.array(
-[[715,   0.,         310],
- [  0.,         715, 240],
- [  0.,           0.,           1.        ]], dtype='float32')
-
-cam_mtrx_c920 = np.float32(
-[[596.26209856,   0.,         453.26862804],
- [  0.,         580.57194811, 270.86714865],
- [  0.,           0.,           1.        ]])
-
-distorts_c920 = np.float32([ 0.09042259, -0.26670032,  0.0015737,  -0.00970892,  0.2473531 ])
-
-
-distorts = None#np.array([-0.07893495,  1.34223772, -0.00841574, -0.008392,   -4.1361857 ], dtype='float32')
 world_pts = [
         (3.313, 4.824),
         (1.337, 5.325),
@@ -85,9 +64,6 @@ world_pts = [
         (12.691, -0.501),
         (14.627, 0),
 ]
-
-#cam_mtrx = cam_mtrx_c920
-#distorts = distorts_c920
 
 def draw(img, corner, imgpts):
     corner = tuple(corner.ravel())
@@ -115,28 +91,27 @@ def draw_cube(img, corner, imgpts):
 cube = np.float32([[0,0,0], [0,3,0], [3,3,0], [3,0,0],
                    [0,0,-3],[0,3,-3],[3,3,-3],[3,0,-3] ])
 
-DEV = int(sys.argv[1])
+DEV = int(sys.argv[2])
 #world_pts += ((14.627 - x, y) for x, y in reversed(world_pts))
 world_pts = np.float32([(x, -y, 0) for x, y in world_pts])
 print(world_pts)
 print(cam_mtrx)
 cap = cv2.VideoCapture(DEV)
 print('Got cap')
-exposure = 80 if len(sys.argv) < 3 else int(sys.argv[2])
+exposure = 80 if len(sys.argv) < 4 else int(sys.argv[3])
 os.system('v4l2-ctl -d /dev/video{} -c exposure_auto=1 -c white_balance_temperature_auto=0 -c exposure_absolute={}'.format(DEV, exposure))
 os.system('v4l2-ctl -d /dev/video{} -c focus_auto=0'.format(DEV))
 os.system('v4l2-ctl -d /dev/video{} -c focus_absolute=0'.format(DEV))
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 #cap.set(cv2.CAP_PROP_FRAME_WIDTH, 864)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-#cap.set(cv2.CAP_PROP_EXPOSURE, n)
 pipeline = GripPipeline()
-#targetColor = cv2.cvtColor(np.array([[[128, 255, 128]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
-targetColor = cv2.cvtColor(np.array([[[10 * 255 // 100, 47 * 255 // 100, 25 * 255 // 100]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
-#targetColor = cv2.cvtColor(np.array([[[0x28, 0x68, 0x4e]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
+targetColor = constants['targetColor']
 lab_factors = 2, 1, 1
-g_rot = np.float32([[0, 0, 0]]).T
-g_pos = np.float32([[0, 0, 0]]).T
+#g_rot = np.float32([[0, 0, 0]]).T
+#g_pos = np.float32([[0, 0, 0]]).T
+rot_history = []
+pos_history = []
 import itertools
 def main_loop():
     while True:
@@ -188,6 +163,7 @@ def main_loop():
                 else: pass
                     #cv2.circle(fr, (int(x), int(y)), 2, (0, 0, 255), -1)
         c_exact = []
+        inliers = None
         if fc:
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
             c_exact = cv2.cornerSubPix(greenscale, np.float32(fc), (5, 5), (-1, -1), criteria)
@@ -219,9 +195,14 @@ def main_loop():
                 #print(rvecs, tvecs)
                 if inliers is not None:
                     centerp = np.float32([14.627/2, -5.325/2, 0])
-                    global g_rot, g_pos
-                    g_rot = rvecs
-                    g_pos = tvecs
+                    #global g_rot, g_pos
+                    #g_rot = rvecs
+                    #g_pos = tvecs
+                    rot_history.append(rvecs)
+                    pos_history.append(tvecs)
+                    if len(rot_history) > 5:
+                        del rot_history[0]
+                        del pos_history[0]
                     #ax2 = axis + centerp
                     #print(ax2)
                     #ax2 = np.insert(ax2, 0, centerp, axis=0)#np.float32([centerp]) + ax2
@@ -243,6 +224,9 @@ def main_loop():
 
         #pipeline.hsv_threshold_output
         #print(corners)
+        if len(rot_history) > 0 and inliers is None:
+            del rot_history[0]
+            del pos_history[0]
         cv2.imshow('f1', fr)
         cv2.imshow('dsst', op)
         cv2.imshow('bc', zer)
@@ -253,6 +237,7 @@ t = threading.Thread(target=main_loop)
 
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
+from panda3d.core import Mat4
 class MyApp(ShowBase):
  
     def __init__(self):
@@ -264,10 +249,24 @@ class MyApp(ShowBase):
         self.cam_model = self.loader.loadModel("camera.egg")
         self.cam_model.reparentTo(self.render)
         #self.disableMouse()
+        #self.useDrive()
+        self.camera.setPos(14.627 / 2 * 2.54, -50, 5.325 / 2 * 2.54)#20 * 2.54, 10 * 2.54, 40 * 2.54)
+        #self.camera.setHpr(0, math.sin(taskinfo.time) * 5, 0)
+        aa = True
+        m = Mat4(self.camera.getMat())
+        m.invertInPlace()
+        self.mouseInterfaceNode.setMat(m)
+        #            centerp = np.float32([14.627/2, -5.325/2, 0])
         self.scene.setPos(0, 0, -.254)
         self.taskMgr.add(self.updateTask, "update")
         self.camLens.setFov(60)
     def updateTask(self, t):
+        #m = Mat4(self.camera.getMat())
+        #m.invertInPlace()
+        #self.camera.setMat(m)
+        if len(rot_history) == 0: return Task.cont
+        g_rot = np.mean(rot_history, axis=0)
+        g_pos = np.mean(pos_history, axis=0)
         rod, jac = cv2.Rodrigues(g_rot)
         mat = np.append(np.append(rod, g_pos, axis=1), np.float32([[0, 0, 0, 1]]), axis=0)
         m2 = np.linalg.inv(mat)[:-1]
@@ -277,7 +276,6 @@ class MyApp(ShowBase):
         x, y, z = tr2 * 2.54 #g_pos[:,0] * 2.54
         #rn, tn, *_ = cv2.composeRT(g_rot, g_pos, np.float32([[0, -math.pi, 0]]).T, np.float32([[0, 0, 0]]).T)
         rx, ry, rz = rot2[:,0] * (180 / math.pi)
-        
 
         print(rx, ry, rz)
         print(x, y, z)
