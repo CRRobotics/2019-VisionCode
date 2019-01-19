@@ -9,26 +9,28 @@ FOV_X                   = 42.0
 FOV_Y                   = 31.0
 WIDTH                   = 640.0
 HEIGHT                  = 480.0
-LENGTH_IN_INCHES        = 5.75
-#FOV_PER_PIXEL           = FOV / WIDTH
-X_POSITION              = 8
-Y_POSITION              = 8
+LENGTH_IN_INCHES        = 5.5
+FOV_PER_PIXEL           = FOV_X / WIDTH
+FOV_PER_PIXEL2          = FOV_Y / HEIGHT
 Z_POSITION              = 757
 ANGLE_OF_CAMERA         = 0
 DISTANCE_BETWEEN_BOXES  = 8
-RECT_HEIGHT             = 5.5
+# RECT_HEIGHT             = 5.5
+pi = math.pi
+RECT_HEIGHT               = LENGTH_IN_INCHES*math.sin(75.5*pi/180)
 
 FOCAL_LENGTH_W = WIDTH / (2*math.tan(FOV_X / 180 * math.pi / 2))
 FOCAL_LENGTH_H = HEIGHT / (2*math.tan(FOV_Y / 180 * math.pi / 2))
 CENTER_X = (WIDTH - 1) / 2
+CENTER_Y = (HEIGHT - 1) / 2
 #print(math.atan(78.5/12)*180/3.141592654)
-
+print("Four is the ... all you need.")
 
 def x_to_angle(x):
     return math.atan((x - CENTER_X) / FOCAL_LENGTH_W) * 180 / math.pi
 
 
-def y_to_angle(x):
+def y_to_angle(y):
     return math.atan((y - CENTER_Y) / FOCAL_LENGTH_H) * 180 / math.pi
 
 # location of text for testing
@@ -78,12 +80,18 @@ while True:
             ySortedBox2 = list(sorted(box2, key=lambda x: x[1]))
 
             # gets the second highest point in box and box2
+
             secondHighestPoint = ySortedBox[1][0]
             secondHighestPoint2 = ySortedBox2[1][0]
 
             # gets the lowest point in box and box2
             lowestPoint = ySortedBox[3][0]
             lowestPoint2 = ySortedBox2[3][0]
+            print(trmp)
+
+            # gets the second lowest point in box and box2
+            secondLowestPoint = ySortedBox[2][0]
+            secondLowestPoint2 = ySortedBox2[2][0]
 
             # draws the center points of the first trmp
             img[p2[1], p2[0]] = (0, 0, 255)
@@ -112,14 +120,26 @@ while True:
                 cv2.putText(img, str(int(angle)) + " degrees from center", (50, 50), font, 1, (0, 255, 0), 2)
 
                 # finding the distance of the target
+
+
                 trigAngle = length*FOV_PER_PIXEL
                 distance1 = LENGTH_IN_INCHES/math.tan(trigAngle*math.pi/180)
                 distance2 = math.pow(math.pow(X_POSITION, 2) + math.pow(Y_POSITION, 2), 1/2)
                 distanceFromArbetraryPoint = math.pow(distance1*distance1 + distance2*distance2 - 2*distance1*distance2*math.cos(angle*math.pi/180), 1/2)
                 cv2.putText(img, str(int(distance1)) + " distance from camera", (50, 100), font, 1, (0, 255, 0), 2)
                 cv2.putText(img, str(int(distanceFromArbetraryPoint)) + " distance from camera", (50, 200), font, 1, (0, 255, 0), 2)
+                # angleToTarget = (pi + (pi - math.asin(math.sin(trigAngle * pi/180)/DISTANCE_BETWEEN_BOXES) - ((pi - trigAngle*pi/180)/2))) / 2 - trigAngle * pi/180
+                # print(secondLowestPoint, secondHighestPoint)
+                # print(((secondLowestPoint2 - secondHighestPoint2) * FOV_PER_PIXEL) / 2, ((secondLowestPoint - secondHighestPoint) * FOV_PER_PIXEL) / 2)
+                # distanceX = RECT_HEIGHT / math.tan(((secondLowestPoint2 - secondHighestPoint2) * FOV_PER_PIXEL) / 2 * pi / 180)
+                # distanceY = RECT_HEIGHT / math.tan(((secondLowestPoint - secondHighestPoint) * FOV_PER_PIXEL) / 2 * pi / 180)
+                # print("yeet")
+                # print(math.tan(((secondLowestPoint - secondHighestPoint) * FOV_PER_PIXEL) / 2 * pi / 180))
+                # angleZ = math.acos(DISTANCE_BETWEEN_BOXES **  2 - distanceX ** 2 - distanceY ** 2) / (-2*distanceX*distanceY)
+                # cv2.putText(img, str(int(angleZ)) + " dwowsersa", (50, 250), font, 1, (0, 255, 0), 2)
+
             else:
-                print(trmp)
+                # print(trmp)
                 trmp = (trmp[0], trmp[1], -180-trmp[2])
                 box = np.int0(cv2.boxPoints(trmp))
                 cv2.drawContours(img, [box], 0, (255, 0, 0), 2)
@@ -142,6 +162,7 @@ while True:
                 angle2 = FOV_PER_PIXEL * (WIDTH / 2 - center2[0]) + ANGLE_OF_CAMERA
                 cv2.putText(img, str(angle) + " angle from camera", (50, 50), font, 1, (0, 255, 0), 2)
                 cv2.putText(img, str(angle2) + " angle from camera", (50, 100), font, 1, (0, 255, 0), 2)
+
 
 
     # if(len(rect) > 0):
