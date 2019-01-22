@@ -13,3 +13,4 @@ cam_mtrx =  np.array(
 distorts = None
 #targetColor = cv2.cvtColor(np.array([[[0x69, 0x7f, 0xb0]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
 targetColor = cv2.cvtColor(np.array([[[0x89, 0x9f, 0xd0]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
+exposure = 30

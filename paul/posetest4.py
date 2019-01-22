@@ -4,7 +4,7 @@ import math
 from enum import Enum
 import sys
 
-# load comments from external file
+# load constants from external file
 constants = {}
 s = exec(open(sys.argv[1], 'r').read(), constants)
 
@@ -91,13 +91,14 @@ print(world_pts)
 print(cam_mtrx)
 cap = cv2.VideoCapture(DEV)
 print('Got cap')
-exposure = 80 if len(sys.argv) < 4 else int(sys.argv[3])
+exposure = constants['exposure'] if len(sys.argv) < 4 else int(sys.argv[3])
 os.system('v4l2-ctl -d /dev/video{} -c exposure_auto=1 -c white_balance_temperature_auto=0 -c exposure_absolute={}'.format(DEV, exposure))
 os.system('v4l2-ctl -d /dev/video{} -c focus_auto=0'.format(DEV))
 os.system('v4l2-ctl -d /dev/video{} -c focus_absolute=0'.format(DEV))
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+res_x, res_y = constants.get('resolution', (640, 480))
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, res_x)
 #cap.set(cv2.CAP_PROP_FRAME_WIDTH, 864)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, res_y)
 
 # the GRIP pipeline is pretty trivial and just does the first level of HSV filtering
 pipeline = GripPipeline()
@@ -105,9 +106,13 @@ targetColor = constants['targetColor']
 lab_factors = 2, 1, 1
 g_rot = np.float32([[0, 0, 0]]).T
 g_pos = np.float32([[0, 0, 0]]).T
+g_rot2 = np.float32([[0, 0, 0]]).T
+g_pos2 = np.float32([[0, 0, 0]]).T
 kernel = np.ones((5, 5), np.uint8)
 import itertools
+#import rspnp
 def main_loop():
+    saves_left = 0
     while True:
         rv, fr = cap.read()
         if not rv: break
@@ -182,13 +187,14 @@ def main_loop():
 
         # Look for Harris corners in the areas selected by edge intersections
         fc = []
+        onscreen_fc = []
         tt = fr.copy()
-        corner_msk = np.zeros(fr.shape[:-1], dtype=np.bool_)
         fmax = corners.max()
         BOX_SIZE=7
         for x, y in pts1:
-            if x < -BOX_SIZE or x > fr.shape[1] + BOX_SIZE or y < -BOX_SIZE or y > fr.shape[0] + BOX_SIZE:
-                #fc.append((x, y))
+            if x < -BOX_SIZE /2  or x > fr.shape[1] + BOX_SIZE / 2 or y < -BOX_SIZE / 2 or y > fr.shape[0] + BOX_SIZE / 2:
+                onscreen_fc.append(False)
+                fc.append((x, y))
                 continue
             ix, iy = int(x), int(y)
             # find coords of top-left corner
@@ -201,6 +207,9 @@ def main_loop():
             tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,2] = masked * 255
             ret, labels, stats, centroids = cv2.connectedComponentsWithStats(masked.astype('uint8'))
             if len(centroids) <= 1:
+                if x < 0 or x > fr.shape[1] or y < 0 or y > fr.shape[0]:
+                    onscreen_fc.append(False)
+                    fc.append((x, y))
                 #fc.append((x, y))
                 cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (0.0, 0.0, 1.0))
                 continue
@@ -208,35 +217,47 @@ def main_loop():
             rc1 = np.log(region - (region.min() - 1))
             def key(x):
                 i, (stat, centroid) = x
-                i += 1
                 rc = rc1.copy()
-                rc[~(labels == i)] = 0
+                rc[labels != (i + 1)] = 0
                 return rc.sum()
             # get connected component with the highest total Harris corner value
             i, (st, (cx, cy)) = max(enumerate(zip(stats[1:], centroids[1:])), key=key)
             cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
+            onscreen_fc.append(True)
             fc.append((cx + mx, cy + my))
 
         c_exact = []
-        if len(fc) > 0:
+        if any(onscreen_fc):
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
             # refine corners to sub-pixel level
-            c_exact = cv2.cornerSubPix(greenscale, np.float32(fc), (5, 5), (-1, -1), criteria)
-            for x, y in c_exact:
-                cv2.circle(fr, (int(x), int(y)), 3, (255, 64, 64), 1)
+            c_exact1 = cv2.cornerSubPix(greenscale, np.float32([x for i, x in enumerate(fc) if onscreen_fc[i]]), (5, 5), (-1, -1), criteria)
+            #if len(c_exact1) < len(onscreen_fc): continue
+            c_exact = []
+            j = 0
+            for i, v in enumerate(onscreen_fc):
+                if v:
+                    c_exact.append((c_exact1[j], True))
+                    j += 1
+                else:
+                    c_exact.append((fc[i], False))
+            for (x, y), legit in c_exact:
+                try:
+                    cv2.circle(fr, (int(x), int(y)), 3, (255, 64, 64), 1)
+                except OverflowError:
+                    pass
             #for i, (x, y, z) in enumerate(world_pts):
             #    cv2.putText(fr,str(i),(int(x*5),int(y*5)+50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
             
             ## Sort points. First split left and right rectangle, then sort counterclockwise by angle to the center
-            if len(c_exact) == 8:
-                h = list(sorted(c_exact, key=lambda x: x[0]))
+            if sum(onscreen_fc) > 4 and len(onscreen_fc) == 8:
+                h = list(sorted(c_exact, key=lambda x: x[0][0]))
                 left = h[:4]
                 right = h[4:]
                 pts = []
                 for rect in left, right:
-                    centerx, centery = sum(x[0] for x in rect) / len(rect), sum(x[1] for x in rect) / len(rect)
+                    centerx, centery = sum(x[0][0] for x in rect) / len(rect), sum(x[0][1] for x in rect) / len(rect)
                     def key(r):
-                        x, y = r
+                        (x, y), legit = r
                         dx, dy = x - centerx, y - centery
                         return math.atan2(-dy, dx) % (2 * math.pi)
                     l = list(sorted(rect, key=key))
@@ -244,30 +265,55 @@ def main_loop():
                     #    l2 = l[(i+1)%4]
                     #    cv2.line(fr, tuple(l1), tuple(l2), (0, 0, 255), 1, cv2.LINE_AA)
                     pts += l
-                for i, (x, y) in enumerate(pts):
+                for i, ((x, y), legit) in enumerate(pts):
                     cv2.putText(fr,str(i),(int(x),int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
-                pts = np.float32(pts)
-                retval2, rvecs, tvecs, inliers = cv2.solvePnPRansac(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                pts_to_solve = np.bool_(onscreen_fc)
+                fpts = np.float32([x[0] for x in pts])
+                pts_f = fpts[pts_to_solve]
+                world_pts_f = world_pts[pts_to_solve]
+                global g_rot, g_pos, g_rot2, g_pos2
+                if not ((g_rot == 0).all() and (g_pos == 0).all()):
+                    retval2_, rvecs, tvecs, inliers_ = cv2.solvePnPRansac(world_pts_f, pts_f, cam_mtrx, distorts, g_rot, g_pos, useExtrinsicGuess=True)#, flags=cv2.SOLVEPNP_EPNP)
+                else:
+                    retval2_, rvecs, tvecs, inliers_ = cv2.solvePnPRansac(world_pts_f, pts_f, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                #print(world_pts_f)
+                #print(pts_f)
+                #if not ((g_rot == 0).all() and (g_pos == 0).all()):
+                #    retval2, rvecs1, tvecs1, rvecs2, tvecs2 = rspnp.solve_rspnp(world_pts_f, pts_f, cam_mtrx, distorts, rspnp.SHUTTER.VERTICAL, [0, 480], rvec1=g_rot2, tvec1=g_pos2, useExtrinsicGuess=True)#, flags=cv2.SOLVEPNP_EPNP)
+                #else:
+                #    retval2, rvecs1, tvecs1, rvecs2, tvecs2 = rspnp.solve_rspnp(world_pts_f, pts_f, cam_mtrx, distorts, rspnp.SHUTTER.VERTICAL, [0, 480])#, flags=cv2.SOLVEPNP_EPNP)
+                #rvecs_ = (rvecs1 + rvecs2) / 2
+                #tvecs_ = (tvecs1 + tvecs2) / 2
+                print(np.stack((rvecs[:,0], tvecs[:,0]), axis=1))
+                #print(np.stack((rvecs_[:,0], tvecs_[:,0]), axis=1))
+                #print(rvecs, tvecs, rvecs2, tvecs2)
+                inliers = np.expand_dims(np.arange(8), axis=1)
                 #retval2, rvecs, tvecs, = cv2.solvePnP(world_pts, pts, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
-                cv2.putText(fr,'I: {}'.format(len(inliers) if inliers is not None else 'X'),(550, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255) if inliers is not None and len(inliers) == 8 else (0,0,255),1,cv2.LINE_AA)
+                cv2.putText(fr,'I: {}/{}'.format(len(inliers) if inliers is not None else 'X', len(pts_f)),(530, 50), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255) if inliers is not None and len(inliers) == len(pts_f) else (0,0,255),1,cv2.LINE_AA)
                 if inliers is not None:
-                    o = set(range(8)) - set(inliers[:,0].tolist())
+                    o = set(range(len(pts_f))) - set(inliers[:,0])
                     for idx in o:
-                        x, y = pts[idx]
+                        x, y = pts_f[idx]
                         ix, iy = int(x), int(y)
                         #cv2.line(fr, (ix - 5, iy - 5), (ix + 5, iy + 5), (0, 0, 255), 1, cv2.LINE_AA)
                         #cv2.line(fr, (ix - 5, iy + 5), (ix + 5, iy - 5), (0, 0, 255), 1, cv2.LINE_AA)
                         cv2.circle(fr, (ix, iy), 3, (0, 0, 255), 1)
 
                     centerp = np.float32([14.627/2, -5.325/2, 0])
-                    global g_rot, g_pos
                     g_rot = rvecs
                     g_pos = tvecs
+                    #g_rot2 = rvecs_
+                    #g_pos2 = tvecs_
 
                     # Project cube according to perspective and display
                     qb = cube + centerp
+                    #print(qb)
                     imgpts, jac = cv2.projectPoints(qb, rvecs, tvecs, cam_mtrx, distorts)
-                    fr = draw_cube(fr, None, imgpts)
+                    #print(cam_mtrx)
+                    #print(distorts)
+                    #print(imgpts)
+                    if not any(abs(x) > 1500 for x in imgpts.flatten()):
+                        fr = draw_cube(fr, None, imgpts)
 
                     #pts2, jac = cv2.projectPoints(world_pts, rvecs, tvecs, cam_mtrx, distorts)
                     #for x, y in np.int32(pts2).reshape(-1, 2):
@@ -281,14 +327,29 @@ def main_loop():
         cv2.imshow('corners', cm)
         cv2.imshow('dsst', op)
         cv2.imshow('f1', fr)
+        if saves_left > 0:
+            cv2.imwrite('frame_{}.png'.format(10 - saves_left), fr)
+            saves_left -= 1
         #cv2.imshow('bc', zer)
-        if cv2.waitKey(1) & 0xff == 27: break
+        key = cv2.waitKey(1) & 0xff
+        if key == 27: break
+        if key == ord('s') and saves_left == 0:
+            saves_left = 10
     cv2.destroyAllWindows()
 import threading
 t = threading.Thread(target=main_loop)
 
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
+def invertPerspective(rvecs, tvecs):
+        rod, jac = cv2.Rodrigues(rvecs)
+        mat = np.append(np.append(rod, tvecs, axis=1), np.float32([[0, 0, 0, 1]]), axis=0)
+        m2 = np.linalg.inv(mat)[:-1]
+        tr2 = m2[:,3]
+        rot2_rod = m2[:,:3]
+        rot2, jac = cv2.Rodrigues(rot2_rod)
+        return rot2, tr2
+
 class MyApp(ShowBase):
  
     def __init__(self):
@@ -300,7 +361,12 @@ class MyApp(ShowBase):
         #self.sph = self.loader.loadModel("smiley.egg")
         self.cam_ind = self.loader.loadModel("camera.egg")
         self.cam_ind.reparentTo(self.render)
-        self.cam_ind.setScale(2)
+        self.cam_ind.setScale(2.5)
+        self.cam_ind.setColorScale(1.0, 0.6, 0.6, 1.0)
+        self.cam_ind2 = self.loader.loadModel("camera.egg")
+        self.cam_ind2.reparentTo(self.render)
+        self.cam_ind2.setScale(2.5)
+        self.cam_ind2.setColorScale(0.6, 0.6, 1.0, 1.0)
         self.useTrackball()
         print(self.trackball.node().getPos())
         self.scene.setPos(0, 0, -.254)
@@ -308,21 +374,22 @@ class MyApp(ShowBase):
         self.camLens.setFov(60)
     def updateTask(self, t):
         # Find inverse of perspective transform (get "camera moves" perspective)
-        rod, jac = cv2.Rodrigues(g_rot)
-        mat = np.append(np.append(rod, g_pos, axis=1), np.float32([[0, 0, 0, 1]]), axis=0)
-        m2 = np.linalg.inv(mat)[:-1]
-        tr2 = m2[:,3]
-        rot2_rod = m2[:,:3]
-        rot2, jac = cv2.Rodrigues(rot2_rod)
+        persp1 = invertPerspective(g_rot, g_pos)
+        #persp2 =invertPerspective(g_rot2, g_pos2)
+        #rod, jac = cv2.Rodrigues(g_rot)
+        #mat = np.append(np.append(rod, g_pos, axis=1), np.float32([[0, 0, 0, 1]]), axis=0)
+        #m2 = np.linalg.inv(mat)[:-1]
+        #tr2 = m2[:,3]
+        #rot2_rod = m2[:,:3]
+        #rot2, jac = cv2.Rodrigues(rot2_rod)
         # 2.54 cm/inch
-        x, y, z = tr2 * 2.54 #g_pos[:,0] * 2.54
-        rx, ry, rz = rot2[:,0] * (180 / math.pi)
-        
-
-        #print(rx, ry, rz)
-        #print(x, y, z)
-        self.cam_ind.setPos(x, z, -y)
-        self.cam_ind.setHpr(-ry, rx, rz)#-rz, -rz)#rx, -rz)
+        for cm, (rot2, tr2) in ((self.cam_ind, persp1),):# (self.cam_ind2, persp2)):
+            if np.isnan(rot2).any() or np.isnan(tr2).any(): continue
+            x, y, z = tr2 * 2.54 #g_pos[:,0] * 2.54
+            rx, ry, rz = rot2[:,0] * (180 / math.pi)
+            #print(id(cm), x, y, z)
+            cm.setPos(x, z, -y)
+            cm.setHpr(-ry, rx, rz)#-rz, -rz)#rx, -rz)
         return Task.cont
 
 if __name__ == '__main__':
