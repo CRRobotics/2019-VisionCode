@@ -11,4 +11,4 @@ cam_mtrx =  np.array(
  [  0.,           0.,           1.        ]], dtype='float32')
 
 targetColor = cv2.cvtColor(np.array([[[128, 255, 128]]], 'uint8'), cv2.COLOR_RGB2LAB)[0,0]
-
+distorts = None
