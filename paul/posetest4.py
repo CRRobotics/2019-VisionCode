@@ -91,16 +91,16 @@ def main_loop():
         if not rv: break
         #fr = cv2.imread('Target2.png')#.svg.png')
 
-        #fr_lab = cv2.cvtColor(fr, cv2.COLOR_BGR2LAB)
+        fr_lab = cv2.cvtColor(fr, cv2.COLOR_BGR2LAB)
         # convert frame to LAB color space
-        #channels = cv2.split(fr_lab.astype('int16'))
+        channels = cv2.split(fr_lab.astype('int16'))
 
         # create image of how close each pixel is to a certain color
-        #greenscale = np.zeros(fr.shape[:-1], 'int16')
-        #for tr, ch, fac in zip(targetColor, channels, lab_factors):
-        #    greenscale += np.absolute(ch - tr) // fac
-        #greenscale = 255 - np.clip((greenscale), 0, 255).astype('uint8')
-        greenscale = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+        greenscale = np.zeros(fr.shape[:-1], 'int16')
+        for tr, ch, fac in zip(targetColor, channels, lab_factors):
+            greenscale += np.absolute(ch - tr) // fac
+        greenscale = 255 - np.clip((greenscale), 0, 255).astype('uint8')
+        #greenscale = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
         cv2.imshow('greenscale', greenscale)
 
         
@@ -119,58 +119,86 @@ def main_loop():
         eroded_hsv_1 = cv2.dilate(cv2.erode(op, kernel, iterations=1), kernel, iterations=1)#.astype(np.bool_)
 
         # find contours
-        contours1, hier1 = cv2.findContours(eroded_hsv_1, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours1, hier1 = cv2.findContours(eroded_hsv_1, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         approxes = [cv2.approxPolyDP(x, 0.02 * cv2.arcLength(x, True), True) for x in contours1]
 
         a = False
         pts1 = []
         prevArea = 0
         rectangles = []
+        LOOKAHEAD = 5
+        kmeans_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+        for area, loop in sorted(((cv2.contourArea(x), x) for x in contours1), key=lambda x: x[0], reverse=True):
+            if len(loop) < 20: continue
+            if area < prevArea / 2: continue
+            prevArea = area
+            cpts = []
+            for i, v1 in enumerate(loop):
+                v2 = loop[(i+LOOKAHEAD) % len(loop)]
+                vec = np.float32((v2 - v1)[0])
+                s = math.sqrt(sum(vec ** 2))
+                if s == 0.0: continue
+                #print(vec, s)
+                vec /= s
+                cpts.append(vec)
+            cpts = np.float32(cpts)
+            ret,label,center=cv2.kmeans(cpts,4,None,kmeans_criteria,10,cv2.KMEANS_RANDOM_CENTERS)
+            colors = [(255, 255, 255), (0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
+            for i, v1 in enumerate(loop):
+                v2 = loop[(i+LOOKAHEAD) % len(loop)]
+                #print(v1[0], v2[0])
+                #cm = cv2.line(cm, tuple(v1[0]), tuple(v2[0]), colors[label[i,0]], 1, cv2.LINE_AA) 
+
+            ll = len(label)
+            l3 = np.concatenate((label, label, label))
+            kernel_1d = np.ones(LOOKAHEAD, dtype=np.uint8)
+
+            sides = []
+            for i in range(len(center)):
+                f = cv2.erode((l3 == i).astype(np.uint8), kernel_1d)[ll:ll*2,0].astype(np.bool_)
+                #print(f.T)
+                #idxs = f | np.roll(f, LOOKAHEAD)#np.concatenate((f, (f + LOOKAHEAD) % len(loop)))
+                idxs = np.roll(f, LOOKAHEAD // 2)
+                s_pts = loop[idxs]
+                #print(s_pts)
+                if len(s_pts) == 0: break # continue
+                vx, vy, xi, yi = cv2.fitLine(s_pts, cv2.DIST_L2, 0, 0.01, 0.01)[:,0]
+                sz = sum(idxs)
+                sides.append((sz, (vx, vy, xi, yi)))
+
+                #print(vx, vy, xi, yi)
+                fr = cv2.line(fr, (int(xi + vx * -50), int(yi + vy * -50)), (int(xi + vx * 50), int(yi + vy * 50)), (255, 255, 255), 1, cv2.LINE_AA)
+                #rv, labels, stats, centroids = cv.connectedComponentsWithStats(f)
+            if len(sides) < 4: continue
+            sd = list(sorted(sides, key=lambda x: x[0]))
+            order = sd[0], sd[2], sd[1], sd[3]
+            corners_ = []
+            for i, s1 in enumerate(order):
+                s2 = order[(i+1)%4]
+                vx1, vy1, ix1, iy1 = s1[1]
+                vx2, vy2, ix2, iy2 = s2[1]
+                try:
+                    res = np.linalg.solve(np.float32([
+                        [vx1, 0, -1, 0],
+                        [vy1, 0, 0, -1],
+                        [0, vx2, -1, 0],
+                        [0, vy2, 0, -1]]), np.float32([[-ix1, -iy1, -ix2, -iy2]]).T)
+                except np.linalg.LinAlgError:
+                    break
+                #print(res[0,2:4,0])
+                corners_.append(res[2:4,0])
+            if len(corners_) < 4: continue
+            rectangles.append(np.float32(corners_))
+            #print(corners_)
+            #for x, y in corners_:
+            #    if 0 < x < fr.shape[1] and 0 < y < fr.shape[0]: cm[int(y), int(x)] = (0, 0, 240)
+
+            #print(label, center)
+
+
         ## Find contour edges, then find their intersections to find approximate corner locations
         # iterate over contours, large to small
         #cm = cv2.drawContours(cm, approxes,-1,(0,0,255),1)
-        for area, loop in sorted(((cv2.contourArea(x), x) for x in approxes), key=lambda x: x[0], reverse=True):
-            if len(loop) > 8: continue
-            if area < prevArea / 2: continue
-            prevArea = area
-            cm = cv2.drawContours(cm, [loop],-1,(255,0,0),1)
-
-            angles = np.zeros(len(loop), dtype='float32')
-            ll = len(loop)
-            # find angles of each corner and eliminate angles that are too straight
-            for i, cur in enumerate(loop):
-                prev = loop[(i-1)%ll][0]
-                nex = loop[(i+1)%ll][0]
-                cur = cur[0]
-                angles[i] = (math.atan2(cur[1] - prev[1], cur[0] - prev[0]) - math.atan2(cur[1] - nex[1], cur[0] - nex[0])) % math.pi
-            sp = [x[0] for i, x in enumerate(loop) if angles[i] < math.pi * .85]
-            if len(sp) < 4: continue
-
-            # Order edges by long, short, long, short, so that each consecutive pair has an intersection
-            pairs = [(sp[i], sp[(i+1)%len(sp)]) for i in range(len(sp))]
-            relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))[:4]
-            for p1, p2 in relevantLines:
-                cv2.line(fr, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (240, 0, 0), 1, cv2.LINE_AA) 
-            order = relevantLines[0], relevantLines[2], relevantLines[1], relevantLines[3]
-            nr = []
-            for i, cur in enumerate(order):
-                nex = order[(i+1)%4]
-                (x1, y1), (x2, y2) = cur
-                (x3, y3), (x4, y4) = nex
-                # find intersections
-                try:
-                    res = np.linalg.solve(np.array([
-                        [x2 - x1, 0, -1, 0],
-                        [y2 - y1, 0, 0, -1],
-                        [0, x4 - x3, -1, 0],
-                        [0, y4 - y3, 0, -1]]), np.array([[-x1, -y1, -x3, -y3]]).T)
-                except np.linalg.LinAlgError:
-                    # if lines are parallel, ignore
-                    continue
-                nr.append(res[2:4,0])
-                #pts1.append(res[2:4,0])
-            rectangles.append(nr)
-
 
         # Look for Harris corners in the areas selected by edge intersections
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
@@ -180,9 +208,10 @@ def main_loop():
         fmax = corners.max()
         BOX_SIZE=7
         def refine_point(x, y):
-            if x < -BOX_SIZE /2  or x > fr.shape[1] + BOX_SIZE / 2 or y < -BOX_SIZE / 2 or y > fr.shape[0] + BOX_SIZE / 2:
-                return (x, y), False
             ix, iy = int(x), int(y)
+            if x < -BOX_SIZE /2  or x > fr.shape[1] + BOX_SIZE / 2 or y < -BOX_SIZE / 2 or y > fr.shape[0] + BOX_SIZE / 2:
+                cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (1.0, 0.0, 0.0))
+                return (x, y), False
             # find coords of top-left corner
             mx, my = max(ix - BOX_SIZE, 0), max(iy - BOX_SIZE, 0)
             region = corners[my:iy+BOX_SIZE,mx:ix+BOX_SIZE]
@@ -194,9 +223,9 @@ def main_loop():
             ret, labels, stats, centroids = cv2.connectedComponentsWithStats(masked.astype('uint8'))
             if len(centroids) <= 1:
                 #if x < 0 or x > fr.shape[1] or y < 0 or y > fr.shape[0]:
+                cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (0.0, 0.0, 1.0))
                 return (x, y), False
                 #fc.append((x, y))
-                cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (0.0, 0.0, 1.0))
             cv2.rectangle(cm, (ix - BOX_SIZE, iy - BOX_SIZE), (ix + BOX_SIZE, iy + BOX_SIZE), (0.0, 1.0, 0.0))
             rc1 = np.log(region - (region.min() - 1))
             def key(x):
@@ -215,8 +244,8 @@ def main_loop():
             pairs = [(points[i], points[(i+1)%len(points)]) for i in range(len(points))]
             #for p1, p2 in pairs:
             #    cv2.line(fr, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 0, 240), 1, cv2.LINE_AA) 
-            for p1 in points:
-                if 0 < p1[0] < fr.shape[1] and 0 < p1[1] < fr.shape[0]: fr[int(p1[1]), int(p1[0])] = (0, 0, 240)
+            #for p1 in points:
+            #    if 0 < p1[0] < fr.shape[1] and 0 < p1[1] < fr.shape[0]: fr[int(p1[1]), int(p1[0])] = (0, 0, 240)
             relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))
             #print(len(relevantLines))
             def ap(a, b):
@@ -234,7 +263,8 @@ def main_loop():
             points, pointsRefined = zip(*sorted(l, key=key))
             lf = np.float32(points)
             return Rect(area=cv2.contourArea(lf), points=lf, refined=np.bool_(pointsRefined), center=np.float32([centerx, centery]), tilt=ang)
-        refined_rects = [create_Rect([refine_point(x, y) for x, y in rect]) for rect in rectangles if len(rect) == 4]
+        refined_rects = [create_Rect([refine_point(x, y) for x, y in rect]) for rect in rectangles]# if len(rect) == 4]
+        refined_rects = [x for x in refined_rects if x.refined.any()]
 
         pairings = []
         #for r1 in refined_rects:
@@ -259,6 +289,7 @@ def main_loop():
                 rs, rs_r = rect_sort(r2)
                 p1 = np.append(ls, rs, axis=0)
                 v1 = np.append(ls_r, rs_r, axis=0)
+                if not v1[[0,1,4,5]].any() or not v1[[2,3,6,7]].any(): continue
                 if sum(v1) < 4: continue
                 #rps = np.append(li, ri + 4, axis=0)
                 p2 = p1[v1]
@@ -289,31 +320,37 @@ def main_loop():
                         imgpts = imgpts[:,0]
                         sp = np.stack((p2, imgpts), axis=1)
                         st = (p2 - imgpts) ** 2
-                        print(st)
+                        #print(st)
                         err = np.sum(np.sqrt(np.sum(st, axis=1))) / len(p2) / math.sqrt(cv2.contourArea(r1.points) + cv2.contourArea(r2.points))
-                        print(err)
+                        #print(err)
                         #err = sum(sum((a - b) ** 2) for a, b in zip(p2, imgpts)) / len(p2) / (cv2.contourArea(r1.points) + cv2.contourArea(r2.points))#sum(ltr_vec ** 2)
                         #for a, b in zip(p2, imgpts):
                         #    print(a, b, (a - b), (a - b) ** 2, sum((a - b) ** 2))
                         #print(err)
                         if err < .1:
-                            cv2.line(fr, tuple(map(int, r1.center)), tuple(map(int, r2.center)), (32, 255, 0), 1, cv2.LINE_AA)
+                            if (r1.center > 0).all() and (r2.center > 0).all(): cv2.line(fr, tuple(map(int, r1.center)), tuple(map(int, r2.center)), (32, 255, 0), 1, cv2.LINE_AA)
                             #centerp = (r1.center + r2.center) / 2
-                            centerp = np.float32([14.627/2, -5.325/2, 0])
-                            qb = cube + centerp
-                            #print(qb)
-                            imgpts, jac = cv2.projectPoints(qb, rvecs, tvecs, cam_mtrx, distorts)
-                            #print(cam_mtrx)
-                            #print(distorts)
-                            if not any(abs(x) > 1500 for x in imgpts.flatten()):
-                                fr = draw_cube(fr, None, imgpts)
-                                xx, yy = imgpts[2,0]
-                                cv2.putText(fr,'{:.3e}'.format(err),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
-                            pairings.append((err, (r1, r2), (rvecs, tvecs)))
+                            pairings.append((err, (r1, r2), (rvecs, tvecs), (p2, wps)))
                             del refined_rects[j]
                             break
 
             i += 1
+        for h in pairings:
+            er, (r1, r2), (r, t), (ip, wp) = h
+            print(len(ip))
+            if len(ip) < 6: continue
+            retval2_, rvecs, tvecs, inliers = cv2.solvePnPRansac(wp, ip, cam_mtrx, distorts, flags=cv2.SOLVEPNP_ITERATIVE)
+            centerp = np.float32([14.627/2, -5.325/2, 0])
+            qb = cube + centerp
+            #print(qb)
+            imgpts, jac = cv2.projectPoints(qb, rvecs, tvecs, cam_mtrx, distorts)
+            #print(cam_mtrx)
+            #print(distorts)
+            if not any(abs(x) > 1500 for x in imgpts.flatten()):
+                fr = draw_cube(fr, None, imgpts)
+                xx, yy = imgpts[2,0]
+                cv2.putText(fr,'{:.3e}'.format(err),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+
 
         #valids = list(sorted(pairings, key=lambda x: x[0]))[:len(refined_rects)//2]
         #for i in valids:
