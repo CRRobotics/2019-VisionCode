@@ -133,15 +133,16 @@ def main_loop():
         if not rv: break
         #fr = cv2.imread('Target2.png')#.svg.png')
 
-        fr_lab = cv2.cvtColor(fr, cv2.COLOR_BGR2LAB)
+        #fr_lab = cv2.cvtColor(fr, cv2.COLOR_BGR2LAB)
         # convert frame to LAB color space
-        channels = cv2.split(fr_lab.astype('int16'))
+        #channels = cv2.split(fr_lab.astype('int16'))
 
         # create image of how close each pixel is to a certain color
-        greenscale = np.zeros(fr.shape[:-1], 'int16')
-        for tr, ch, fac in zip(targetColor, channels, lab_factors):
-            greenscale += np.absolute(ch - tr) // fac
-        greenscale = 255 - np.clip((greenscale), 0, 255).astype('uint8')
+        #greenscale = np.zeros(fr.shape[:-1], 'int16')
+        #for tr, ch, fac in zip(targetColor, channels, lab_factors):
+        #    greenscale += np.absolute(ch - tr) // fac
+        #greenscale = 255 - np.clip((greenscale), 0, 255).astype('uint8')
+        greenscale = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
         cv2.imshow('greenscale', greenscale)
         #pipeline.process(fr)
         #op = pipeline.hsv_threshold_output
@@ -190,6 +191,8 @@ def main_loop():
             # Order edges by long, short, long, short, so that each consecutive pair has an intersection
             pairs = [(sp[i], sp[(i+1)%len(sp)]) for i in range(len(sp))]
             relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))[:4]
+            for p1, p2 in relevantLines:
+                cv2.line(fr, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (240, 0, 0), 1, cv2.LINE_AA) 
             order = relevantLines[0], relevantLines[2], relevantLines[1], relevantLines[3]
             nr = []
             for i, cur in enumerate(order):
@@ -212,6 +215,7 @@ def main_loop():
 
 
         # Look for Harris corners in the areas selected by edge intersections
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
         fc = []
         onscreen_fc = []
         tt = fr.copy()
@@ -245,11 +249,16 @@ def main_loop():
             # get connected component with the highest total Harris corner value
             i, (st, (cx, cy)) = max(enumerate(zip(stats[1:], centroids[1:])), key=key)
             cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
-            return (cx + mx, cy + my), True
+            c_exact1 = cv2.cornerSubPix(greenscale, np.float32([[cx + mx, cy + my]]), (5, 5), (-1, -1), criteria)
+            return c_exact1[0], True
 
         def create_Rect(l):
             points, pointsRefined = zip(*l)
             pairs = [(points[i], points[(i+1)%len(points)]) for i in range(len(points))]
+            #for p1, p2 in pairs:
+            #    cv2.line(fr, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (0, 0, 240), 1, cv2.LINE_AA) 
+            for p1 in points:
+                if 0 < p1[0] < fr.shape[1] and 0 < p1[1] < fr.shape[0]: fr[int(p1[1]), int(p1[0])] = (0, 0, 240)
             relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))
             #print(len(relevantLines))
             def ap(a, b):
@@ -257,7 +266,7 @@ def main_loop():
             x1, y1 = ap(*relevantLines[2])
             x2, y2 = ap(*relevantLines[3])
             ang = math.atan2(y1 - y2, x2 - x1) % math.pi
-            cv2.putText(fr,'{:.2f}'.format(ang),(int(x1 + x2) // 2,int(y1 + y2) // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+            #cv2.putText(fr,'{:.2f}'.format(ang),(int(x1 + x2) // 2,int(y1 + y2) // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
             #print(ang)
             centerx, centery = np.mean(np.float32(points), axis=0)
             def key(r):
@@ -268,65 +277,97 @@ def main_loop():
             lf = np.float32(points)
             return Rect(area=cv2.contourArea(lf), points=lf, refined=np.bool_(pointsRefined), center=np.float32([centerx, centery]), tilt=ang)
         refined_rects = [create_Rect([refine_point(x, y) for x, y in rect]) for rect in rectangles if len(rect) == 4]
-        
-        OFFS = 14.5 * math.pi / 180
-        pairs = []
-        ss = list(sorted(refined_rects, key=lambda x: x.area, reverse=True))
-        i = 0
-        while i < len(ss):
-            rect = ss[i]
-            r_ang = (rect.tilt - math.pi / 2 + OFFS)
-            l_ang = (rect.tilt + math.pi / 2 - OFFS)
-            na = rect.tilt - math.pi / 2
-            def coord_change(pt, v1, v2):
-                return np.linalg.solve(np.float32(
-                    [[v1[0], v2[0]],
-                     [v1[1], v2[1]]]), np.float32(pt).T).T
-            def gp(x, y):
-                return (x, y), (y, -x)
-            right = gp(math.cos(r_ang), math.sin(r_ang))
-            left = gp(math.cos(l_ang), math.sin(l_ang))
-            nvec = gp(math.cos(na), math.sin(na))
-            cv2.putText(fr,'{:.02f} {:.02f} {:.02f}'.format(rect.tilt, nvec[0][0], nvec[0][1]),tuple(map(int, rect.center)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
-            cc = np.float32(nvec[1]) * (20, -20) + rect.center
-            try:
-                cv2.line(fr, (int(rect.center[0]), int(rect.center[1])), (int(cc[0]), int(cc[1])), (255, 0, 255), 2, cv2.LINE_AA)
-            except OverflowError:
-                pass
-            def key(nr):
-                pt = nr.center - rect.center
-                x, y = coord_change(pt, *nvec)
-                if abs(nr.tilt - rect.tilt) < 10 / 180 * math.pi: return float('inf')
-                if x < 0 != nr.tilt < rect.tilt: return float('inf')
-                x1, y1 = coord_change(pt, *(left if x < 0 else right))
-                return 10 * (y1 ** 2) + x1 ** 2
-            def ok_y(nr):
-                x, y = coord_change(nr.center, *nvec)
-                x1, y1 = coord_change(nr.center - rect.center, *left)
-                x2, y2 = coord_change(nr.center - rect.center, *right)
-                return (abs(y1) * 8 < abs(x1)) if x < 0 else (abs(y2) * 8 < abs(x2))
 
-            try:
-                idx, mate = min(((i, x) for i, x in enumerate(ss) if rect != x and ok_y(x) and rect.area / math.sqrt(2) < x.area < rect.area * math.sqrt(2)), key=lambda x: key(x[1]))
-            except ValueError:
-                cv2.drawMarker(fr, tuple(map(int, rect.center)), (0, 0, 255))
-                pass
-            else:
-                pairs.append((rect, mate))
-                del ss[idx]
+        pairings = []
+        #for r1 in refined_rects:
+        i = 0
+        while i < len(refined_rects):
+            r1_ = refined_rects[i]
+            for j, r2_ in sorted(enumerate(refined_rects[i+1:]), key=lambda r: sum((r[1].center - r1_.center) ** 2)):
+                j += i + 1
+                #if r2_ is r1_: continue
+                r1, r2 = (r1_, r2_) if r1_.center[0] < r2_.center[0] else (r2_, r1_)
+                #if r2.center[0] < r1.center[0]: continue
+                ltr_vec = r2.center - r1.center
+                ltr = math.atan2(-ltr_vec[1], ltr_vec[0])
+                def rect_sort(rect):
+                    def key(i):
+                        pt = rect.points[i]
+                        v = pt - rect.center
+                        return (math.atan2(-v[1], v[0]) - ltr) % (2 * math.pi)
+                    l = list(sorted(list(range(len(rect.points))), key=key))
+                    return rect.points[l], rect.refined[l]#, l
+                ls, ls_r = rect_sort(r1)
+                rs, rs_r = rect_sort(r2)
+                p1 = np.append(ls, rs, axis=0)
+                v1 = np.append(ls_r, rs_r, axis=0)
+                if sum(v1) < 4: continue
+                #rps = np.append(li, ri + 4, axis=0)
+                p2 = p1[v1]
+                wps = world_pts[v1]
+                #print(v1, wps, p2)
+                try:
+                    #retval2_, rvecs, tvecs, inliers_ = cv2.solvePnPRansac(wps, p2, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
+                    #print(p2)
+                    #print(p2)
+                    p3 = p2.reshape(-1,1,2)#p2[:,np.newaxis,:]
+                    #print(p3)
+                    wp3 = wps.reshape(-1,1,3)
+                    rvecs = np.empty((3, 1), dtype=np.float32)
+                    tvecs = np.empty((3, 1), dtype=np.float32)
+                    retval2_, rvecs, tvecs = cv2.solvePnP(wp3, p3, cam_mtrx, distorts, rvecs, tvecs, flags=cv2.SOLVEPNP_EPNP, useExtrinsicGuess=False)
+                    #print('R')
+                    #print(rvecs)
+                    #print('T')
+                    #print(tvecs)
+                except cv2.error as e:
+                    pass
+                    print(e)
+                else:
+                    if retval2_:
+                        imgpts, jac = cv2.projectPoints(wps, rvecs, tvecs, cam_mtrx, distorts)
+                        #print(p2)
+                        #print(imgpts[0,:])
+                        imgpts = imgpts[:,0]
+                        sp = np.stack((p2, imgpts), axis=1)
+                        st = (p2 - imgpts) ** 2
+                        print(st)
+                        err = np.sum(np.sqrt(np.sum(st, axis=1))) / len(p2) / math.sqrt(cv2.contourArea(r1.points) + cv2.contourArea(r2.points))
+                        print(err)
+                        #err = sum(sum((a - b) ** 2) for a, b in zip(p2, imgpts)) / len(p2) / (cv2.contourArea(r1.points) + cv2.contourArea(r2.points))#sum(ltr_vec ** 2)
+                        #for a, b in zip(p2, imgpts):
+                        #    print(a, b, (a - b), (a - b) ** 2, sum((a - b) ** 2))
+                        #print(err)
+                        if err < 1e-3:
+                            cv2.line(fr, tuple(map(int, r1.center)), tuple(map(int, r2.center)), (32, 255, 0), 1, cv2.LINE_AA)
+                            #centerp = (r1.center + r2.center) / 2
+                            centerp = np.float32([14.627/2, -5.325/2, 0])
+                            qb = cube + centerp
+                            #print(qb)
+                            imgpts, jac = cv2.projectPoints(qb, rvecs, tvecs, cam_mtrx, distorts)
+                            #print(cam_mtrx)
+                            #print(distorts)
+                            if not any(abs(x) > 1500 for x in imgpts.flatten()):
+                                fr = draw_cube(fr, None, imgpts)
+                                xx, yy = imgpts[2,0]
+                                cv2.putText(fr,'{:.2f}'.format(err * 100000),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+                            pairings.append((err, (r1, r2), (rvecs, tvecs)))
+                            del refined_rects[j]
+                            break
+
             i += 1
 
+        #valids = list(sorted(pairings, key=lambda x: x[0]))[:len(refined_rects)//2]
+        #for i in valids:
+        #    r1, r2 = i[1]
+        #    cv2.line(fr, tuple(map(int, r1.center)), tuple(map(int, r2.center)), (0, 0, 255), 1, cv2.LINE_AA)
+            
 
-        for n1, n2 in pairs:
-            c1 = tuple(np.int32(n1.center))
-            c2 = tuple(np.int32(n2.center))
-            print(c1, c2)
-            cv2.line(fr, c1, c2, (0, 0, 255), 2, cv2.LINE_AA)
-            #cv2.drawMarker(fr, c2, (0, 255, 0))
+        
+        OFFS = 14.5 * math.pi / 180
             
         c_exact = []
         if any(onscreen_fc):
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
             # refine corners to sub-pixel level
             c_exact1 = cv2.cornerSubPix(greenscale, np.float32([x for i, x in enumerate(fc) if onscreen_fc[i]]), (5, 5), (-1, -1), criteria)
             #if len(c_exact1) < len(onscreen_fc): continue
