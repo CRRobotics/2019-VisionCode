@@ -1,5 +1,6 @@
 import cv2
 import numpy
+from scipy import ndimage
 import math
 from enum import Enum
 import sys
@@ -80,11 +81,15 @@ class Rect:
     area: float
     points: typing.Any
     refined: np.ndarray
-    center: tuple
+    center: np.ndarray
+    v_vert: tuple
     tilt: float
 import itertools
+#import gil_load
 #import rspnp
 def main_loop():
+    #gil_load.init()
+    #gil_load.start()
     saves_left = 0
     while True:
         rv, fr = cap.read()
@@ -151,7 +156,7 @@ def main_loop():
 
             ll = len(label)
             l3 = np.concatenate((label, label, label))
-            kernel_1d = np.ones(LOOKAHEAD, dtype=np.uint8)
+            kernel_1d = np.ones(LOOKAHEAD // 2, dtype=np.uint8)
 
             sides = []
             for i in range(len(center)):
@@ -167,7 +172,7 @@ def main_loop():
                 sides.append((sz, (vx, vy, xi, yi)))
 
                 #print(vx, vy, xi, yi)
-                fr = cv2.line(fr, (int(xi + vx * -50), int(yi + vy * -50)), (int(xi + vx * 50), int(yi + vy * 50)), (255, 255, 255), 1, cv2.LINE_AA)
+                #fr = cv2.line(fr, (int(xi + vx * -50), int(yi + vy * -50)), (int(xi + vx * 50), int(yi + vy * 50)), (255, 255, 255), 1, cv2.LINE_AA)
                 #rv, labels, stats, centroids = cv.connectedComponentsWithStats(f)
             if len(sides) < 4: continue
             sd = list(sorted(sides, key=lambda x: x[0]))
@@ -188,7 +193,10 @@ def main_loop():
                 #print(res[0,2:4,0])
                 corners_.append(res[2:4,0])
             if len(corners_) < 4: continue
-            rectangles.append(np.float32(corners_))
+            cc = np.float32(corners_)
+            #fr = cv2.drawContours(fr, [cc.astype('int32')], -1, (255, 255, 255), 1, lineType=cv2.LINE_AA)
+
+            rectangles.append(cc)
             #print(corners_)
             #for x, y in corners_:
             #    if 0 < x < fr.shape[1] and 0 < y < fr.shape[0]: cm[int(y), int(x)] = (0, 0, 240)
@@ -215,7 +223,7 @@ def main_loop():
             # find coords of top-left corner
             mx, my = max(ix - BOX_SIZE, 0), max(iy - BOX_SIZE, 0)
             region = corners[my:iy+BOX_SIZE,mx:ix+BOX_SIZE]
-            masked = (region > .0085 * fmax)#.002 * fmax)
+            masked = (region > .025 * region.max())#.002 * fmax)
             # update debug image
             #tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,0] = masked * 255
             #tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,1] = masked * 255
@@ -236,7 +244,10 @@ def main_loop():
             # get connected component with the highest total Harris corner value
             i, (st, (cx, cy)) = max(enumerate(zip(stats[1:], centroids[1:])), key=key)
             cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
-            c_exact1 = cv2.cornerSubPix(greenscale, np.float32([[cx + mx, cy + my]]), (5, 5), (-1, -1), criteria)
+            rcc = rc1.copy()
+            rcc[labels != (i+1)] = 0
+            cx2, cy2 = ndimage.measurements.center_of_mass(rcc)
+            c_exact1 = cv2.cornerSubPix(greenscale, np.float32([[cx2 + mx, cy2 + my]]), (5, 5), (-1, -1), criteria)
             return c_exact1[0], True
 
         def create_Rect(l):
@@ -247,12 +258,13 @@ def main_loop():
             #for p1 in points:
             #    if 0 < p1[0] < fr.shape[1] and 0 < p1[1] < fr.shape[0]: fr[int(p1[1]), int(p1[0])] = (0, 0, 240)
             relevantLines = list(sorted(pairs, key=lambda x: ((x[0][0] - x[1][0]) ** 2 + (x[0][1] - x[1][1]) ** 2), reverse=True))
+            r2 = list(sorted(relevantLines[2:4], key=lambda x: min(x[0][1], x[1][1]), reverse=True))
             #print(len(relevantLines))
-            def ap(a, b):
-                return (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
-            x1, y1 = ap(*relevantLines[2])
-            x2, y2 = ap(*relevantLines[3])
-            ang = math.atan2(y1 - y2, x2 - x1) % math.pi
+            #def ap(a, b):
+            #    return (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+            pbot = np.sum(r2[0], axis=0) / 2
+            ptop = np.sum(r2[1], axis=0) / 2
+            ang = math.atan2(ptop[1] - pbot[1], ptop[0] - pbot[0]) % math.pi
             #cv2.putText(fr,'{:.2f}'.format(ang),(int(x1 + x2) // 2,int(y1 + y2) // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
             #print(ang)
             centerx, centery = np.mean(np.float32(points), axis=0)
@@ -262,16 +274,37 @@ def main_loop():
                 return math.atan2(-dy, dx) % (2 * math.pi)
             points, pointsRefined = zip(*sorted(l, key=key))
             lf = np.float32(points)
-            return Rect(area=cv2.contourArea(lf), points=lf, refined=np.bool_(pointsRefined), center=np.float32([centerx, centery]), tilt=ang)
+            return Rect(area=cv2.contourArea(lf), points=lf, refined=np.bool_(pointsRefined), center=np.float32([centerx, centery]), tilt=ang, v_vert=(pbot, ptop))
         refined_rects = [create_Rect([refine_point(x, y) for x, y in rect]) for rect in rectangles]# if len(rect) == 4]
         refined_rects = [x for x in refined_rects if x.refined.any()]
+        for r in refined_rects:
+            fr = cv2.drawContours(fr, [r.points.astype('int32')], -1, (255, 255, 255), 1, lineType=cv2.LINE_AA)
 
         pairings = []
         #for r1 in refined_rects:
         i = 0
+        def coord_change(pt, v1, v2):
+            return np.linalg.solve(np.float32(
+                [[v1[0], v2[0]],
+                 [v1[1], v2[1]]]), np.float32(pt).T).T
+        def rot(theta):
+            c, s = np.cos(theta), np.sin(theta)
+            return np.array(((c,-s), (s, c)))
+        r_left = rot(np.radians(-14.5))
+        r_right = rot(np.radians(14.5))
         while i < len(refined_rects):
             r1_ = refined_rects[i]
-            for j, r2_ in sorted(enumerate(refined_rects[i+1:]), key=lambda r: sum((r[1].center - r1_.center) ** 2)):
+            def dst(r2):
+                #r2 = r2[1]
+                pbot, ptop = r2.v_vert
+                vec = ptop - pbot
+                nvec = vec / np.sqrt(sum(vec ** 2))
+                pvec = nvec[[1,0]] * [1, -1]
+                rvec = r2.center - r1_.center
+                xf, yf = coord_change(rvec, pvec, nvec)
+                x1, y1 = coord_change(np.dot(rvec, r_right if xf > 0 else r_left), np.dot(pvec, r_right if xf > 0 else r_left), nvec)
+                return x1 ** 2 + y1 ** 2 * 10
+            for j, (r2_, dst) in sorted(enumerate((x, dst(x)) for x in refined_rects[i+1:]), key=lambda x: x[1][1]):#lambda r: sum((r[1].center - r1_.center) ** 2)):
                 j += i + 1
                 #if r2_ is r1_: continue
                 r1, r2 = (r1_, r2_) if r1_.center[0] < r2_.center[0] else (r2_, r1_)
@@ -336,10 +369,10 @@ def main_loop():
 
             i += 1
         for h in pairings:
+        #if False:
             er, (r1, r2), (r, t), (ip, wp) = h
-            print(len(ip))
             if len(ip) < 6: continue
-            retval2_, rvecs, tvecs, inliers = cv2.solvePnPRansac(wp, ip, cam_mtrx, distorts, flags=cv2.SOLVEPNP_ITERATIVE)
+            retval2_, rvecs, tvecs, inliers = cv2.solvePnPRansac(wp, ip, cam_mtrx, distorts, rvec=r, tvec=t, iterationsCount=100, flags=cv2.SOLVEPNP_ITERATIVE, useExtrinsicGuess=True)
             centerp = np.float32([14.627/2, -5.325/2, 0])
             qb = cube + centerp
             #print(qb)
@@ -349,7 +382,9 @@ def main_loop():
             if not any(abs(x) > 1500 for x in imgpts.flatten()):
                 fr = draw_cube(fr, None, imgpts)
                 xx, yy = imgpts[2,0]
-                cv2.putText(fr,'{:.3e}'.format(err),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+                cv2.putText(fr,'{:.1f} {:.1f} {:.1f}'.format(*tvecs[:,0]),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+                #cv2.putText(fr,'{:.3e}'.format(er),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
+                #cv2.putText(fr,'{} {:.3e}'.format(len(inliers), err),(int(xx),int(yy + 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
 
 
         #valids = list(sorted(pairings, key=lambda x: x[0]))[:len(refined_rects)//2]
@@ -470,11 +505,14 @@ def main_loop():
         if key == ord('s') and saves_left == 0:
             saves_left = 10
     cv2.destroyAllWindows()
-import threading
-t = threading.Thread(target=main_loop)
+    #gil_load.stop()
+    #print(gil_load.get(N=4))
 
-from direct.showbase.ShowBase import ShowBase
-from direct.task import Task
+#import threading
+#t = threading.Thread(target=main_loop)
+
+#from direct.showbase.ShowBase import ShowBase
+#from direct.task import Task
 def invertPerspective(rvecs, tvecs):
         rod, jac = cv2.Rodrigues(rvecs)
         mat = np.append(np.append(rod, tvecs, axis=1), np.float32([[0, 0, 0, 1]]), axis=0)
@@ -484,8 +522,8 @@ def invertPerspective(rvecs, tvecs):
         rot2, jac = cv2.Rodrigues(rot2_rod)
         return rot2, tr2
 
-class MyApp(ShowBase):
- 
+#class MyApp(ShowBase):
+class MyApp:
     def __init__(self):
         ShowBase.__init__(self)
         #self.scene = self.loader.loadModel("models/environment")
