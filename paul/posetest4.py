@@ -212,7 +212,7 @@ def main_loop():
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.001)
         fc = []
         onscreen_fc = []
-        tt = fr.copy()
+        #tt = fr.copy()
         fmax = corners.max()
         BOX_SIZE=7
         def refine_point(x, y):
@@ -223,7 +223,7 @@ def main_loop():
             # find coords of top-left corner
             mx, my = max(ix - BOX_SIZE, 0), max(iy - BOX_SIZE, 0)
             region = corners[my:iy+BOX_SIZE,mx:ix+BOX_SIZE]
-            masked = (region > .025 * region.max())#.002 * fmax)
+            masked = (region > .1 * region.max())#.002 * fmax)
             # update debug image
             #tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,0] = masked * 255
             #tt[my:iy+BOX_SIZE,mx:ix+BOX_SIZE,1] = masked * 255
@@ -243,7 +243,7 @@ def main_loop():
                 return rc1[labels == (i+1)].sum()
             # get connected component with the highest total Harris corner value
             i, (st, (cx, cy)) = max(enumerate(zip(stats[1:], centroids[1:])), key=key)
-            cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
+            #cv2.circle(tt, (int(cx + mx), int(cy + my)), 1, (0, 0, 255), -1)
             rcc = rc1.copy()
             rcc[labels != (i+1)] = 0
             cx2, cy2 = ndimage.measurements.center_of_mass(rcc)
@@ -327,6 +327,8 @@ def main_loop():
                 #rps = np.append(li, ri + 4, axis=0)
                 p2 = p1[v1]
                 wps = world_pts[v1]
+                #for q, (xx, yy) in enumerate(p2):
+                #    cv2.putText(fr,str(q),(int(xx),int(yy)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(255,255,255),1,cv2.LINE_AA)
                 #print(v1, wps, p2)
                 try:
                     #retval2_, rvecs, tvecs, inliers_ = cv2.solvePnPRansac(wps, p2, cam_mtrx, distorts)#, flags=cv2.SOLVEPNP_EPNP)
@@ -372,7 +374,7 @@ def main_loop():
         #if False:
             er, (r1, r2), (r, t), (ip, wp) = h
             if len(ip) < 6: continue
-            retval2_, rvecs, tvecs, inliers = cv2.solvePnPRansac(wp, ip, cam_mtrx, distorts, rvec=r, tvec=t, iterationsCount=100, flags=cv2.SOLVEPNP_ITERATIVE, useExtrinsicGuess=True)
+            retval2_, rvecs, tvecs, inliers = cv2.solvePnPRansac(wp, ip, cam_mtrx, distorts, iterationsCount=100, flags=cv2.SOLVEPNP_ITERATIVE)
             centerp = np.float32([14.627/2, -5.325/2, 0])
             qb = cube + centerp
             #print(qb)
@@ -495,6 +497,7 @@ def main_loop():
         #cv2.imshow('corners', corners)
         cv2.imshow('corners', cm)
         cv2.imshow('dsst', op)
+        #cv2.imshow('tt', tt)
         cv2.imshow('f1', fr)
         if saves_left > 0:
             cv2.imwrite('frame_{}.png'.format(10 - saves_left), fr)
