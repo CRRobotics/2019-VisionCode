@@ -13,6 +13,14 @@ import socket
 from threading import Thread
 import cv2
 
+
+def twos_comp(val, num_bits):
+    val = int(val)
+    if val < 0:
+        val = 256 + val
+    return val
+
+
 ###########################################################################
 # Constants
 ###########################################################################
@@ -288,93 +296,19 @@ while(True):
              distance = (11.3134)/math.tan(length*FOV_PERPIXEL_RAD)
              angleToTarget = (((GetCenter(SecondTarget)[0] + previousCenter[0])/2)-320)*FOV_PERPIXEL
      #        distance = distance * math.cos(CAM_ANGLE) - ZPOSITION
-             CameraDistance = distance
-             CameraAngle = (math.atan((distance * math.sin(angleToTarget*A_TO_R + CAMERA_ANGLE) - CAMERA_OFFSET) / distance))/A_TO_R
+             if distance < 72:
+                 CameraDistance = distance
+             if angleToTarget > -20 and angleToTarget < 20:
+                 CameraAngle = (math.atan((distance * math.sin(angleToTarget*A_TO_R + CAMERA_ANGLE) - CAMERA_OFFSET) / distance))/A_TO_R
              imageText ="Angle:"+str(int(CameraAngle * 10)/10.0) +" Distance:"+str(int(distance *10)/10.0)
              cv2.putText(img,imageText,(5,470), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 1)
-             socket.sendto([CameraDistance,CameraAngle],UDP_ADDRESS)
+             print("d:{},a:{}".format(CameraDistance, CameraAngle))
+             sock.sendto(bytes([twos_comp(CameraDistance, 8), twos_comp(CameraAngle * 5, 8)]), UDP_ADDRESS)
         else:
              imageText ="No Target"
-             sock.sendto([-1,-69], UDP_ADDRESS)
+             sock.sendto(bytes([twos_comp(-1, 8),twos_comp(-69, 8)]), UDP_ADDRESS)
              cv2.putText(img,imageText,(5,470), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 1)
-             print(imageText) 
-        
-#James and Nick's Code Part I end                                            
-                                           
-    # only proceed if at least two contours were found
-    #if len(allContours) > 1:
-        #for i in range(1, len(rect)):
-            #Creates tempMinAreaRects values of two correct rectangles in rect
-            #tempBoundingRect = boundingRects[i] #BoundingRectangle closest to middle
-            #tempBoundingRect2 = boundingRects[i-1] #BoundingRectangle correct and closest to tempBoundingRect
-            
-        # find the largest contour in the mask, then use
-        # it to compute the minimum enclosing circle and
-        # centroid
-#        c = max(allContours, key=cv2.contourArea)
-#         allContours.sort(key=cv2.contourArea)
-#    
-#         ((x1, y1), radius1) = cv2.minEnclosingCircle(allContours[0])
-#         M = cv2.moments(allContours[0])
-#         center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-# 
-#         ((x2, y2), radius2) = cv2.minEnclosingCircle(allContours[1])
-#         M2 = cv2.moments(allContours[1])
-#         center2 = (int(M2["m10"] / M2["m00"]), int(M2["m01"] / M2["m00"]))
-#  
-#         # only proceed if the radius meets a minimum size. radius2 is the smaller of the two.
-#         if radius2 > 4:
-#             # Find the target
-#             x= (x1+x2)/2
-#             y= (y1+y2)/2
-#             # draw the circle and centroid on the frame,
-#             # then update the list of tracked points
-#             cv2.circle(img, (int(x1), int(y1)), int(radius1),
-#                 (0, 255, 255), 1)
-#             cv2.circle(img, center, 5, (0, 0, 255), -1)
-# 
-#             cv2.circle(img, (int(x2), int(y2)), int(radius2),
-#                 (0, 255, 255), 1)
-#             cv2.circle(img, center2, 5, (0, 0, 255), -1)
-#             cv2.circle(img, (int(x), int(y)), 5, (0, 255, 255), -1)
-# 
-#             # Find the bounding rectangle that best fits the target
-#             # This is a rotated rectangle so we can calculate the target angle
-#             rect1 = cv2.minAreaRect(allContours[0])
-#             box1 = cv2.boxPoints(rect1)
-#             box1 = np.int0(box1)
-#             rotation = round(np.arctan2(box1[0,1]-box1[1,1], box1[0,0]-box1[1,0])*180/np.pi,1)
-#             cv2.drawContours(img, [box1],0,(0,0,255),1) # Draw the rotated box on the image
-#             
-#             rect1 = cv2.minAreaRect(allContours[1])
-#             box1 = cv2.boxPoints(rect1)
-#             box1 = np.int0(box1)
-#             rotation = round(np.arctan2(box1[0,1]-box1[1,1], box1[0,0]-box1[1,0])*180/np.pi,1)
-#             cv2.drawContours(img, [box1],0,(0,0,255),1) # Draw the rotated box on the image
-#             
-#             # Calculate the angle to target g
-#             XAngleToTarget = round((x-320) * 0.095, 1)
-#             
-#             # Limit the max distance to < 15 feet (And avoid a divide by zero)
-#             DistanceAngleTan = math.tan(((abs(x2-x1)/2) * 0.095)/57.29)
-#             if DistanceAngleTan > 0.0229167: 
-#                 Distance = 4.125/DistanceAngleTan
-#             else:
-#                 Distance = 180
-#         
-#             #makes the angle come from the center of the robot, 16 is distamce from
-#             #the camera to the cemter of rotation
-#             XAngleToTarget = 57.29 * math.atan(Distance * math.sin(XAngleToTarget / 57.29) / (16 + Distance*math.cos(XAngleToTarget / 57.29)))
-#             imageText = "X:"+str(int(x))+" Y:"+str(int(y)) +" Angle:"+str(XAngleToTarget)+" Distance:"+str(Distance)
-#       #      cv2.putText(img,imageText,(5,470), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 1, lineType=cv2.LINE_AA)
-#             cv2.putText(img,imageText,(5,470), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 1)
-#        #     cv2.putText(img, imageText, (x, h), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType=cv2.LINE_AA) 
-#             # Write the target location to the network table
-#  #           sd.putNumber('TargetX', int(x))
-#  #           sd.putNumber('TargetY', int(y))
-#  #           sd.putNumber('XAngleToTarget', XAngleToTarget)
-#  #           sd.putNumber('Distance', Distance)
-
+             print(imageText)         
     else:
         avgCount = 0
         avgX = 0
@@ -404,5 +338,6 @@ cam.stop()
 for i in range(1,10):
     cv2.destroyAllWindows()
     cv2.waitKey(1)
+
 
 
