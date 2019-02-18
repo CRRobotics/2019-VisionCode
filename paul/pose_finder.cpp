@@ -12,9 +12,9 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/calib3d.hpp>
 
-#include <xtensor/xtensor.hpp>
-#include <xtensor/xadapt.hpp>
-#include <xtensor/xview.hpp>
+//#include <xtensor/xtensor.hpp>
+//#include <xtensor/xadapt.hpp>
+//#include <xtensor/xview.hpp>
 
 using namespace libconfig;
 
@@ -209,19 +209,31 @@ int main(int argc, char *argv[]) {
 		auto t1 = perf_timer::now();
 		cv::cvtColor(fr, fr_lab, cv::COLOR_BGR2Lab);
 	    //std::vector<int> shape = {img.cols, img.rows, img.channels()};
-		std::vector<int> shape = {fr.size[0], fr.size[1], fr.channels()};
+		//std::vector<int> shape = {fr.size[0], fr.size[1], fr.channels()};
 		//std::cout << cv::Mat_<size_t>(shape) << std::endl;
 		//std::cout << shape[0] << ' ' << shape[1] << ' ' << shape[2] << std::endl;
-		xt::xtensor<uint8_t, 3> xt_lab = xt::adapt(fr_lab.data, shape[0] * shape[1] * shape[2], xt::no_ownership(), shape);
-		xt::xtensor<uint16_t, 2> greenscale_16 = xt::zeros<uint16_t>({shape[0], shape[1]});
-		for(int i = 0; i < 3; i++) {
+		//xt::xtensor<uint8_t, 3> xt_lab = xt::adapt(fr_lab.data, shape[0] * shape[1] * shape[2], xt::no_ownership(), shape);
+		//xt::xtensor<uint16_t, 2> greenscale_16 = xt::zeros<uint16_t>({shape[0], shape[1]});
+		//for(int i = 0; i < 3; i++) {
 			//xt::xtensor<uint8_t, 2> fr = xt::abs(xt::view(xt_lab, xt::all(), xt::all(), i) - targetColor[i]);
-			greenscale_16 += xt::abs(xt::view(xt_lab, xt::all(), xt::all(), i) - targetColor[i]);
+		//	greenscale_16 += xt::abs(xt::view(xt_lab, xt::all(), xt::all(), i) - targetColor[i]);
 			//Debug<decltype()>{};
+		//}
+		//xt::xtensor<float, 2> greenscale = 255 - xt::cast<float>(xt::clip(greenscale_16, 0, 255));
+		std::vector<cv::Mat> channels;
+		cv::split(fr_lab, channels);
+		cv::Mat_<uint8_t> greenscale_8 = cv::Mat_<uint16_t>::zeros(fr.rows, fr.cols);
+		cv::Mat_<uint8_t> tmp;
+		for(int i = 0; i < 3; i++) {
+			cv::absdiff(channels[i], targetColor[i], tmp);
+			cv::add(tmp, greenscale_8, greenscale_8);
 		}
-		xt::xtensor<float, 2> greenscale = 255 - xt::cast<float>(xt::clip(greenscale_16, 0, 255));
-		std::vector<int> g_shape = {shape[0], shape[1]};
-		cv::Mat greenscale_mat(g_shape, CV_32FC1, greenscale.data());
+		greenscale_8 = 255 - greenscale_8;//.convertTo(CV_8UC1);
+		cv::Mat_<float> greenscale_mat;
+		greenscale_8.convertTo(greenscale_mat, CV_32FC1);
+		//cv::Mat greenscale_mat = greenscale_16.convertTo(CV_32FC1);
+		//std::vector<int> g_shape = {shape[0], shape[1]};
+		//cv::Mat greenscale_mat(g_shape, CV_32FC1, greenscale.data());
 
 		//std::cout << "aaa" << std::endl;
 
